@@ -73,7 +73,7 @@
 
 - [x] **P1-A2 连接解析与建立**
   - 产出：`s9l <id>` 查 config → 选 driver → 解析 `password_ref` → `ConnectionConfig.DSN()` → 连接；`s9l <dsn>` 裸 DSN 直连（`resolveTarget`）
-  - DoD：SQLite 两种方式均跑通 ✅；PG 待 P1-B1（DSN 构建对 postgres 暂返回未实现错误）
+  - DoD：SQLite 两种方式均跑通 ✅；postgres DSN 已随 P1-B1 落地 ✅
   - 依赖：P1-A1, P1-A4 · 预估：0.5d · 注：对话式输入密码留作后续，当前支持 `env:` / `keychain://`
 
 - [x] **P1-A3 连接管理命令**
@@ -87,10 +87,10 @@
   - 依赖：P0-2 · 预估：0.5d · 注：keychain 真实现见 P2-6；对话式输入后续补
 
 ### B. 执行引擎
-- [ ] **P1-B1 PostgreSQL 适配器**
-  - 产出：`internal/driver/postgres/`，用 `jackc/pgx`（stdlib 或原生）
-  - DoD：连 PG，执行查询返回流式 rows；正确映射常见类型（int/float/text/bool/timestamp/null/bytea）
-  - 依赖：P0-3 · 预估：1d · **验证 Driver 抽象是否够用（与 SQLite 差异最大点）**
+- [x] **P1-B1 PostgreSQL 适配器**
+  - 产出：`internal/driver/postgres/`，用 `jackc/pgx/v5/stdlib`（纯 Go，免 CGO）；`[]byte`→string 归一化；Metadata 用 pg_catalog/information_schema（`$1` 占位）；config 的 postgres DSN（postgres:// URL，sslmode，凭据 url 转义）
+  - DoD：连 PG，流式 rows ✅；`RunConformance` 对真实 PG 全 PASS（testcontainers）✅；`\dt`/`\d`/`\l` 正确 ✅
+  - 依赖：P0-3 · 预估：1d · **已验证 Driver 抽象对 SQLite/PG 两库够用（R2 风险消解）**
 
 - [ ] **P1-B2 流式读取与大结果保护**
   - 产出：rows 逐行消费不全量进内存；超大单元格/超宽行截断（可配宽度）
@@ -128,9 +128,9 @@
   - 依赖：P1-C1 · 预估：1d · 注：PG 的 Metadata 实现随 P1-B1 落地（方言差异下沉到各 driver）
 
 ### E. 工程化
-- [ ] **P1-E1 集成测试（testcontainers）**
-  - 产出：PG 用 `testcontainers-go` 起容器跑集成测试；SQLite 走内存库单测
-  - DoD：CI 上集成测试可跑（或标记 `-short` 跳过）
+- [x] **P1-E1 集成测试（testcontainers）**
+  - 产出：`internal/driver/postgres/postgres_test.go` 用 `testcontainers-go/modules/postgres` 起容器跑 conformance + metadata；`testing.Short()` 跳过；CI 新增 `integration` job 跑全量 `go test ./...`
+  - DoD：本地实测 conformance+metadata 对真实 PG 全 PASS ✅；`-short` 跳过容器测试 ✅；CI integration job 就位
   - 依赖：P1-B1 · 预估：1d
 
 - [ ] **P1-E2 README + 安装说明**
