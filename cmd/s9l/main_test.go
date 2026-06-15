@@ -101,6 +101,17 @@ func TestRunMetaCommands(t *testing.T) {
 	}
 }
 
+func TestRunMaxColWidth(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out strings.Builder
+	if err := run([]string{":memory:", "-e", "select 'abcdefghij' as v", "--format", "table", "--max-col-width", "5"}, noInput(), &out, io.Discard); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "abcd…") {
+		t.Fatalf("expected truncated cell, got:\n%s", out.String())
+	}
+}
+
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
 	if err := run([]string{"-version"}, noInput(), &out, io.Discard); err != nil {

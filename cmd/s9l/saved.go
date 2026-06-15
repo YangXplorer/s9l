@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/YangXplorer/s9l/internal/history"
+	"github.com/YangXplorer/s9l/internal/render"
 )
 
 // runSaved dispatches `s9l saved <add|list|search|rm|run>`.
@@ -163,7 +164,7 @@ func savedRun(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runQuery(context.Background(), out, errOut, target, "sqlite", q.SQL, format)
+	return runQuery(context.Background(), out, errOut, target, "sqlite", q.SQL, render.Options{Format: format})
 }
 
 func printSaved(out io.Writer, items []history.SavedQuery) error {
