@@ -24,6 +24,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
+		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
 		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER, name TEXT)`)
 		res, err := c.Exec(ctx, `INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b')`)
 		if err != nil {
@@ -45,6 +46,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
+		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
 		mustExec(t, c, ctx, `CREATE TABLE t (v TEXT)`)
 		mustExec(t, c, ctx, `INSERT INTO t (v) VALUES (NULL)`)
 		_, rows := queryAll(t, c, ctx, `SELECT v FROM t`)
@@ -60,6 +62,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
+		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
 		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER)`)
 		cols, rows := queryAll(t, c, ctx, `SELECT id FROM t`)
 		if len(cols) != 1 {

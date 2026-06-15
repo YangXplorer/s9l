@@ -35,9 +35,20 @@ jobs:
         with:
           go-version: stable
           cache: true
-      # UT + fast SQLite IT (in-memory, no Docker). Container-based PG/MySQL
-      # integration tests arrive with Phase 1 (P1-E1).
+      # UT + fast SQLite IT (in-memory, no Docker).
       - run: go test -short -race ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      # Full suite incl. container-based PostgreSQL tests (testcontainers).
+      # GitHub-hosted ubuntu runners ship with Docker.
+      - run: go test ./...
 
   build:
     runs-on: ubuntu-latest
