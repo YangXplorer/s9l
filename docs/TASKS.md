@@ -12,46 +12,48 @@
 
 预估合计：~1 人日
 
-- [ ] **P0-1 初始化 Go 项目**
-  - 产出：`go.mod`（`module github.com/YangXplorer/s9l`），`.gitignore`，`.editorconfig`
-  - DoD：`go build ./...` 通过
+- [x] **P0-1 初始化 Go 项目**
+  - 产出：`go.mod`（`module github.com/YangXplorer/s9l`，go1.26），`.gitignore`，`.editorconfig`
+  - DoD：`go build ./...` 通过 ✅
   - 依赖：D1 确认 · 预估：0.25d
 
-- [ ] **P0-2 目录骨架**
+- [x] **P0-2 目录骨架**
   - 产出：`cmd/s9l/main.go` + `internal/` 下：
     - `cli/`（命令解析）、`driver/`（DB 适配）、`repl/`（交互）、`render/`（输出）
     - `config/`（`config.go` + `connection.go`，YAML）
     - `secret/`（`store.go` 接口 + `keychain.go` + `memory.go`）
     - `history/`（`repository.go` + `sqlite.go`）
     - `query/`（`history.go` + `saved.go`）
-  - DoD：各包有占位文件，`go vet ./...` 通过
+  - DoD：各包有占位文件，`go vet ./...` 通过 ✅
+  - 实现说明：Phase 1 才落地的包（cli/config/secret/history/query/repl）以 `doc.go` 占位；driver/render 为实体
   - 依赖：P0-1 · 预估：0.25d
 
-- [ ] **P0-3 `Driver` 接口草案（v0）**
+- [x] **P0-3 `Driver` 接口草案（v0）**
   - 产出：`internal/driver/driver.go`，定义最小接口 + 注册机制
-  - 接口至少含：`Open(dsn) (Conn, error)`、`Conn.Query(ctx, sql, args) (Rows, error)`、`Rows`（流式：`Next()/Scan()/Columns()/Close()`）、`Driver.Name()/Scheme()`
-  - 注册：`driver.Register(name, factory)` + `driver.Open(scheme, dsn)`
-  - DoD：接口编译通过，有 1 段 doc 注释说明设计取舍
+  - 接口含：`Driver.Name()`（兼作 DSN scheme，见 driver.go 取舍说明）+ `Open(ctx, dsn) (Conn, error)`；`Conn.Query/Exec/Close`；`Rows`（流式：`Columns()/Next()/Values()/Err()/Close()`）；`Result.RowsAffected()`
+  - 注册：`driver.Register(d)` + `driver.Get(name)` + `driver.Open(ctx, name, dsn)` + `driver.Names()`
+  - 取舍：合并 `Name()/Scheme()` 为单一 `Name()`，避免双重事实源（注释已说明）。`Rows` 用 `Values() ([]any, error)` 而非 `Scan(dest...)`，更贴合"不预知列类型"的终端客户端场景
+  - DoD：接口编译通过，有 doc 注释说明设计取舍 ✅
   - 依赖：P0-2 · 预估：0.25d · **关键：阻塞所有适配器**
 
-- [ ] **P0-4 SQLite 适配器（基准实现）**
-  - 产出：`internal/driver/sqlite/sqlite.go`，用纯 Go 驱动 `modernc.org/sqlite`（免 CGO）
-  - DoD：能 `Open` 一个 `.db` 文件并执行 `select 1` 返回流式 rows
+- [x] **P0-4 SQLite 适配器（基准实现）**
+  - 产出：`internal/driver/sqlite/sqlite.go`，用纯 Go 驱动 `modernc.org/sqlite`（免 CGO）；`[]byte`→`string` 归一化
+  - DoD：能 `Open` 一个 `.db` 文件并执行 `select 1` 返回流式 rows ✅
   - 依赖：P0-3 · 预估：0.25d
 
-- [ ] **P0-5 最小 CLI 入口 + `-e` 单次执行**
-  - 产出：`s9l <path-or-dsn> -e "SQL"`，结果用最朴素表格打印
-  - DoD：`go run ./cmd/s9l ./test.db -e "select 1 as n"` 输出一行结果
+- [x] **P0-5 最小 CLI 入口 + `-e` 单次执行**
+  - 产出：`s9l <path-or-dsn> -e "SQL"`，最朴素表格打印；`-version`；flag 可在 dsn 前后混排
+  - DoD：`go run ./cmd/s9l ./test.db -e "select 1 as n"` 输出结果 ✅
   - 依赖：P0-4 · 预估：0.25d
 
-- [ ] **P0-6 CI（GitHub Actions）**
-  - 产出：`.github/workflows/ci.yml`：`golangci-lint` + `go test ./...` + `go build`
-  - DoD：PR 触发，三步全绿
+- [x] **P0-6 CI（GitHub Actions）**
+  - 产出：`.github/workflows/ci.yml`：lint(golangci-lint) + test(`go test -short -race ./...`) + build(`go build ./...`) 三 job
+  - DoD：PR/push(main,develop) 触发，三步全绿（⚠️ 需一次 GitHub Actions 远端实跑确认）
   - 依赖：P0-1 · 预估：0.25d（可与 P0-3~5 并行）
 
-- [ ] **P0-7 完善 CLAUDE.md（填实）**
-  - 产出：补充实际的构建/测试/运行命令、目录架构说明
-  - DoD：`/init` 复跑无需大改
+- [x] **P0-7 完善 CLAUDE.md（填实）**
+  - 产出：补充已拍板决策、目标架构、常用命令、测试约定、goal-check 机制、Git 约定
+  - DoD：`/init` 复跑无需大改 ✅
   - 依赖：P0-5 · 预估：0.1d
 
 **Phase 0 验收**：clone → `go build` → `s9l ./x.db -e "select 1"` 跑通，CI 绿。
