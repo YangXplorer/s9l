@@ -19,7 +19,7 @@ const replPrompt = "s9l> "
 
 // runREPL opens the connection once and runs the interactive loop, reusing the
 // connection for every statement and recording each in history.
-func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, driverFlag string, format render.Format) error {
+func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, driverFlag string, opts render.Options) error {
 	drv, dsn, err := resolveTarget(target, driverFlag)
 	if err != nil {
 		return err
@@ -38,7 +38,7 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 
 	exec := func(sql string) error {
 		start := time.Now()
-		rowCount, qerr := runStatement(ctx, out, conn, sql, format)
+		rowCount, qerr := runStatement(ctx, out, conn, sql, opts)
 		recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 		return qerr
 	}

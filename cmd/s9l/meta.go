@@ -12,16 +12,16 @@ import (
 
 // runStatement runs one REPL/-e statement: a backslash meta-command (\l, \dt,
 // \d, \?) or plain SQL. Returns the number of rows rendered.
-func runStatement(ctx context.Context, out io.Writer, conn driver.Conn, stmt string, format render.Format) (int, error) {
+func runStatement(ctx context.Context, out io.Writer, conn driver.Conn, stmt string, opts render.Options) (int, error) {
 	if strings.HasPrefix(strings.TrimSpace(stmt), `\`) {
-		return runMeta(ctx, out, conn, strings.TrimSpace(stmt), format)
+		return runMeta(ctx, out, conn, strings.TrimSpace(stmt), opts)
 	}
-	return execute(ctx, out, conn, stmt, format)
+	return execute(ctx, out, conn, stmt, opts)
 }
 
 // runMeta handles backslash meta-commands by calling the driver's Metadata
 // capability and rendering the result like any query.
-func runMeta(ctx context.Context, out io.Writer, conn driver.Conn, line string, format render.Format) (int, error) {
+func runMeta(ctx context.Context, out io.Writer, conn driver.Conn, line string, opts render.Options) (int, error) {
 	fields := strings.Fields(line)
 	cmd := fields[0]
 
@@ -38,28 +38,28 @@ func runMeta(ctx context.Context, out io.Writer, conn driver.Conn, line string, 
 	switch cmd {
 	case `\l`:
 		rows, err := md.Databases(ctx)
-		return renderMeta(out, format, rows, err)
+		return renderMeta(out, opts, rows, err)
 	case `\dt`:
 		rows, err := md.Tables(ctx)
-		return renderMeta(out, format, rows, err)
+		return renderMeta(out, opts, rows, err)
 	case `\d`:
 		if len(fields) < 2 {
 			// \d with no argument lists tables, like psql.
 			rows, err := md.Tables(ctx)
-			return renderMeta(out, format, rows, err)
+			return renderMeta(out, opts, rows, err)
 		}
 		rows, err := md.Columns(ctx, fields[1])
-		return renderMeta(out, format, rows, err)
+		return renderMeta(out, opts, rows, err)
 	default:
 		return 0, fmt.Errorf(`unknown command %q (try \?)`, cmd)
 	}
 }
 
-func renderMeta(out io.Writer, format render.Format, rows driver.Rows, err error) (int, error) {
+func renderMeta(out io.Writer, opts render.Options, rows driver.Rows, err error) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return drainAndRender(out, format, rows)
+	return drainAndRender(out, opts, rows)
 }
 
 const metaHelp = `commands:

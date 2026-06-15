@@ -57,14 +57,16 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	var (
-		execSQL    string
-		driverName string
-		formatFlag string
-		showVer    bool
+		execSQL     string
+		driverName  string
+		formatFlag  string
+		maxColWidth int
+		showVer     bool
 	)
 	fs.StringVar(&execSQL, "e", "", `execute SQL and exit`)
 	fs.StringVar(&driverName, "driver", "sqlite", "driver name for a bare DSN ("+fmt.Sprint(driver.Names())+")")
 	fs.StringVar(&formatFlag, "format", "", "output format: table|json|csv|tsv (default: table on a TTY, tsv when piped)")
+	fs.IntVar(&maxColWidth, "max-col-width", 0, "truncate table cells to N runes (0 = unlimited; table format only)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"`)
@@ -90,18 +92,19 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	opts := render.Options{Format: format, MaxCellWidth: maxColWidth}
 
 	ctx := context.Background()
 	if execSQL == "" {
 		// No -e: drop into the interactive REPL.
-		return runREPL(ctx, in, out, errOut, positionals[0], driverName, format)
+		return runREPL(ctx, in, out, errOut, positionals[0], driverName, opts)
 	}
-	return runQuery(ctx, out, errOut, positionals[0], driverName, execSQL, format)
+	return runQuery(ctx, out, errOut, positionals[0], driverName, execSQL, opts)
 }
 
 // runQuery resolves target to a connection, runs sql, renders the result, and
 // records history (best-effort). It is shared by the `-e` path and `saved run`.
-func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, format render.Format) error {
+func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, opts render.Options) error {
 	drv, dsn, err := resolveTarget(target, driverFlag)
 	if err != nil {
 		return err
@@ -114,7 +117,7 @@ func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sq
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
-	rowCount, qerr := runStatement(ctx, out, conn, sql, format)
+	rowCount, qerr := runStatement(ctx, out, conn, sql, opts)
 	// History recording is best-effort and must not affect the query result.
 	recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 	return qerr
@@ -184,36 +187,36 @@ func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
 
 // execute runs the SQL and renders the result, returning the number of rows
 // rendered (for history bookkeeping).
-func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, format render.Format) (int, error) {
+func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, opts render.Options) (int, error) {
 	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return 0, err
 	}
-	return drainAndRender(out, format, rows)
+	return drainAndRender(out, opts, rows)
 }
 
-// drainAndRender consumes rows and renders them, returning the row count.
+// drainAndRender streams rows to the renderer, returning the row count.
 // Statements that return no columns (DDL/DML) render nothing.
-func drainAndRender(out io.Writer, format render.Format, rows driver.Rows) (int, error) {
+func drainAndRender(out io.Writer, opts render.Options, rows driver.Rows) (int, error) {
 	defer func() { _ = rows.Close() }()
-
-	cols := rows.Columns()
-	var data [][]any
-	for rows.Next() {
-		vals, err := rows.Values()
-		if err != nil {
-			return 0, err
-		}
-		data = append(data, vals)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(cols) == 0 {
+	if len(rows.Columns()) == 0 {
 		return 0, nil
 	}
-	if err := render.Write(out, format, cols, data); err != nil {
-		return 0, err
+	return render.WriteSource(out, opts, &rowsSource{rows: rows})
+}
+
+// rowsSource adapts driver.Rows to render.Source for streaming output.
+type rowsSource struct{ rows driver.Rows }
+
+func (s *rowsSource) Columns() []string { return s.rows.Columns() }
+
+func (s *rowsSource) Next() ([]any, bool, error) {
+	if !s.rows.Next() {
+		return nil, false, s.rows.Err()
 	}
-	return len(data), nil
+	v, err := s.rows.Values()
+	if err != nil {
+		return nil, false, err
+	}
+	return v, true, nil
 }

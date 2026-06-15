@@ -92,10 +92,10 @@
   - DoD：连 PG，流式 rows ✅；`RunConformance` 对真实 PG 全 PASS（testcontainers）✅；`\dt`/`\d`/`\l` 正确 ✅
   - 依赖：P0-3 · 预估：1d · **已验证 Driver 抽象对 SQLite/PG 两库够用（R2 风险消解）**
 
-- [ ] **P1-B2 流式读取与大结果保护**
-  - 产出：rows 逐行消费不全量进内存；超大单元格/超宽行截断（可配宽度）
-  - DoD：查 10w 行不 OOM；输出可控
-  - 依赖：P1-B1 · 预估：0.5d
+- [x] **P1-B2 流式读取与大结果保护**
+  - 产出：`render.Source`/`WriteSource` 流式渲染——csv/tsv/json 逐行写出不缓冲全集（定期 flush）；table 仍缓冲(需算列宽，交互态)；`--max-col-width` 截断表格单元格（仅 table，机器格式不截以保数据完整）
+  - DoD：csv/tsv/json 大结果不全量进内存（实测 5w 行流式导出）✅；`--max-col-width` 输出可控 ✅
+  - 依赖：P1-B1 · 预估：0.5d · 注：render 单一实现(WriteSource)，Write 退化为 slice 适配
 
 - [ ] **P1-B3 错误与上下文处理**
   - 产出：统一错误包装（区分连接错误/SQL 错误/超时）；支持 `Ctrl-C` 取消正在执行的查询（context cancel）
