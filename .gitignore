@@ -1,0 +1,10 @@
+# Build output
+/s9l
+/dist/
+
+# Local SQLite scratch databases
+*.db
+*.sqlite
+
+# OS / editor
+.DS_Store
