@@ -3,6 +3,7 @@ module github.com/YangXplorer/s9l
 go 1.25.0
 
 require (
+	github.com/chzyer/readline v1.5.1
 	github.com/google/go-cmp v0.7.0
 	github.com/mattn/go-isatty v0.0.20
 	gopkg.in/yaml.v3 v3.0.1
