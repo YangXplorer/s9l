@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -48,7 +49,7 @@ func run(args []string, out, errOut io.Writer) error {
 	fs.StringVar(&driverName, "driver", "sqlite", "driver name ("+fmt.Sprint(driver.Names())+")")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
-		fmt.Fprintln(errOut, `usage: s9l <dsn> -e "SQL"`)
+		_, _ = fmt.Fprintln(errOut, `usage: s9l <dsn> -e "SQL"`)
 		fs.PrintDefaults()
 	}
 	// Parse flags that may appear before or after the positional DSN. The Go
@@ -68,8 +69,8 @@ func run(args []string, out, errOut io.Writer) error {
 	}
 
 	if showVer {
-		fmt.Fprintf(out, "s9l %s (commit %s, built %s)\n", version, commit, date)
-		return nil
+		_, err := fmt.Fprintf(out, "s9l %s (commit %s, built %s)\n", version, commit, date)
+		return err
 	}
 
 	if len(positionals) < 1 {
@@ -77,7 +78,7 @@ func run(args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("missing <dsn>")
 	}
 	if execSQL == "" {
-		return fmt.Errorf(`Phase 0 requires -e "SQL"`)
+		return errors.New(`-e "SQL" is required (Phase 0)`)
 	}
 
 	ctx := context.Background()
@@ -85,7 +86,7 @@ func run(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	return execute(ctx, out, conn, execSQL)
 }
@@ -95,7 +96,7 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string) e
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols := rows.Columns()
 	var data [][]any

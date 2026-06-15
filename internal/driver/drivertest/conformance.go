@@ -23,7 +23,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 	t.Run("exec_and_query", func(t *testing.T) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER, name TEXT)`)
 		res, err := c.Exec(ctx, `INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b')`)
 		if err != nil {
@@ -44,7 +44,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 	t.Run("null_handling", func(t *testing.T) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `CREATE TABLE t (v TEXT)`)
 		mustExec(t, c, ctx, `INSERT INTO t (v) VALUES (NULL)`)
 		_, rows := queryAll(t, c, ctx, `SELECT v FROM t`)
@@ -59,7 +59,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 	t.Run("empty_result", func(t *testing.T) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER)`)
 		cols, rows := queryAll(t, c, ctx, `SELECT id FROM t`)
 		if len(cols) != 1 {
@@ -73,7 +73,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 	t.Run("context_cancel", func(t *testing.T) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
 		if _, err := c.Query(cctx, `SELECT 1`); err == nil {
@@ -104,7 +104,7 @@ func queryAll(t *testing.T, c driver.Conn, ctx context.Context, sql string) ([]s
 	if err != nil {
 		t.Fatalf("query %q: %v", sql, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	cols := rows.Columns()
 	var out [][]any
 	for rows.Next() {
