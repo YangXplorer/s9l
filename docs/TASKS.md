@@ -65,26 +65,26 @@
 预估合计：~7–9 人日
 
 ### A. 连接与配置
-- [ ] **P1-A1 配置加载（YAML + XDG）**
-  - 产出：`internal/config/config.go` + `connection.go`，读取 `$XDG_CONFIG_HOME/s9l/config.yaml`，回退 `~/.config/s9l/config.yaml`
+- [x] **P1-A1 配置加载（YAML + XDG）**
+  - 产出：`internal/config/config.go` + `connection.go`，读取 `$XDG_CONFIG_HOME/s9l/config.yaml`，回退 `~/.config/s9l/config.yaml`（`gopkg.in/yaml.v3`）
   - 结构：`connections:` 列表，每项 `ConnectionConfig{ID,Name,Driver,Host,Port,User,Database,SSL,Charset,PasswordRef}`
-  - DoD：能解析多命名连接；文件不存在不报错（视为空配置）；解析错误给清晰报错；YAML 序列化往返一致
+  - DoD：解析多命名连接 ✅；文件不存在视为空配置 ✅；解析错误清晰报错 ✅；YAML 往返一致（go-cmp 测试）✅
   - 依赖：P0-2 · 预估：0.75d
 
-- [ ] **P1-A2 连接解析与建立**
-  - 产出：`s9l <id>` 查 config → 选 driver → 解析 `password_ref`（v0.1：无则起动时输入）→ 连接；`s9l <dsn>` 裸 DSN 直连
-  - DoD：两种方式都能连上 SQLite/PG
-  - 依赖：P1-A1, P1-A4, P1-B1 · 预估：0.5d
+- [x] **P1-A2 连接解析与建立**
+  - 产出：`s9l <id>` 查 config → 选 driver → 解析 `password_ref` → `ConnectionConfig.DSN()` → 连接；`s9l <dsn>` 裸 DSN 直连（`resolveTarget`）
+  - DoD：SQLite 两种方式均跑通 ✅；PG 待 P1-B1（DSN 构建对 postgres 暂返回未实现错误）
+  - 依赖：P1-A1, P1-A4 · 预估：0.5d · 注：对话式输入密码留作后续，当前支持 `env:` / `keychain://`
 
-- [ ] **P1-A3 连接管理命令**
-  - 产出：`s9l conn list` / `s9l conn add` / `s9l conn rm`
-  - DoD：增删查命名连接写回 config.yaml；新建文件权限 0600；不写明文密码
-  - 依赖：P1-A1 · 预估：0.75d
+- [x] **P1-A3 连接管理命令**
+  - 产出：`s9l conn list/add/rm`（`cmd/s9l/conn.go`）
+  - DoD：增删查写回 config.yaml ✅；文件权限 0600 ✅；不写明文密码（仅 `password_ref`）✅
+  - 依赖：P1-A1 · 预估：0.75d · 注：写回不保留 YAML 注释（yaml.v3 限制）
 
-- [ ] **P1-A4 凭据：SecretStore 抽象（v0.1 memory 实现）**
-  - 产出：`internal/secret/store.go`（`SecretStore` 接口）+ `memory.go`（起动时输入、仅内存）；支持环境变量回退（`$PGPASSWORD`/`$MYSQL_PWD` 及 `password_ref` 指向的 env）
-  - DoD：不强制明文存密码即可连接；`password_ref` 解析框架就位（v0.2 接 keychain 时不改调用方）
-  - 依赖：P0-2 · 预估：0.5d · 注：keychain 真实现见 P2-6
+- [x] **P1-A4 凭据：SecretStore 抽象（v0.1 memory 实现）**
+  - 产出：`internal/secret/store.go`（`SecretStore` 接口 + `Resolve`）+ `memory.go`（仅内存）；`password_ref` 支持 `env:NAME` 与 `keychain://s9l/<key>`
+  - DoD：不强制明文存密码即可连接 ✅；`Resolve` 框架就位，v0.2 换 keychain 实现不改调用方 ✅
+  - 依赖：P0-2 · 预估：0.5d · 注：keychain 真实现见 P2-6；对话式输入后续补
 
 ### B. 执行引擎
 - [ ] **P1-B1 PostgreSQL 适配器**
