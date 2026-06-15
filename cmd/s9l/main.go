@@ -21,6 +21,8 @@ import (
 	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/secret"
 
+	"github.com/mattn/go-isatty"
+
 	// Register the built-in drivers.
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
 )
@@ -49,10 +51,12 @@ func run(args []string, out, errOut io.Writer) error {
 	var (
 		execSQL    string
 		driverName string
+		formatFlag string
 		showVer    bool
 	)
 	fs.StringVar(&execSQL, "e", "", `execute SQL and exit`)
 	fs.StringVar(&driverName, "driver", "sqlite", "driver name for a bare DSN ("+fmt.Sprint(driver.Names())+")")
+	fs.StringVar(&formatFlag, "format", "", "output format: table|json|csv|tsv (default: table on a TTY, tsv when piped)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"`)
@@ -88,6 +92,11 @@ func run(args []string, out, errOut io.Writer) error {
 		return errors.New(`-e "SQL" is required`)
 	}
 
+	format, err := outputFormat(formatFlag, out)
+	if err != nil {
+		return err
+	}
+
 	drv, dsn, err := resolveTarget(positionals[0], driverName)
 	if err != nil {
 		return err
@@ -100,7 +109,25 @@ func run(args []string, out, errOut io.Writer) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	return execute(ctx, out, conn, execSQL)
+	return execute(ctx, out, conn, execSQL, format)
+}
+
+// outputFormat picks the result format: the explicit --format flag if given,
+// otherwise a TTY-aware default (table for a terminal, tsv when piped so the
+// output stays machine-parseable).
+func outputFormat(flagVal string, out io.Writer) (render.Format, error) {
+	if flagVal != "" {
+		return render.ParseFormat(flagVal)
+	}
+	if isTTY(out) {
+		return render.FormatTable, nil
+	}
+	return render.FormatTSV, nil
+}
+
+func isTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && isatty.IsTerminal(f.Fd())
 }
 
 // resolveTarget maps the positional argument to a (driver, dsn) pair. If it
@@ -128,7 +155,7 @@ func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
 	return cc.Driver, d, nil
 }
 
-func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string) error {
+func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, format render.Format) error {
 	rows, err := conn.Query(ctx, sql)
 	if err != nil {
 		return err
@@ -147,5 +174,5 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string) e
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return render.Table(out, cols, data)
+	return render.Write(out, format, cols, data)
 }
