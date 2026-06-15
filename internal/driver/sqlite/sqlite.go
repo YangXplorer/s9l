@@ -58,6 +58,26 @@ func (c *conn) Exec(ctx context.Context, query string, args ...any) (driver.Resu
 
 func (c *conn) Close() error { return c.db.Close() }
 
+// Databases implements driver.Metadata (\l): attached databases.
+func (c *conn) Databases(ctx context.Context) (driver.Rows, error) {
+	return c.Query(ctx, `SELECT name, file FROM pragma_database_list ORDER BY seq`)
+}
+
+// Tables implements driver.Metadata (\dt): user tables (excluding internal ones).
+func (c *conn) Tables(ctx context.Context) (driver.Rows, error) {
+	return c.Query(ctx, `SELECT name FROM sqlite_master
+	                     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+	                     ORDER BY name`)
+}
+
+// Columns implements driver.Metadata (\d <table>): column definitions. The
+// table name is passed to the pragma table-valued function as a bound argument,
+// avoiding string interpolation.
+func (c *conn) Columns(ctx context.Context, table string) (driver.Rows, error) {
+	return c.Query(ctx, `SELECT name, type, "notnull", dflt_value, pk
+	                     FROM pragma_table_info(?) ORDER BY cid`, table)
+}
+
 // rowsAdapter adapts *sql.Rows to driver.Rows, exposing generic []any values
 // so the renderer need not know column types ahead of time.
 type rowsAdapter struct {
