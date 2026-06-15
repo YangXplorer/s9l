@@ -110,6 +110,57 @@ func TestHistoryRecordedAndListed(t *testing.T) {
 	}
 }
 
+func TestSavedAddListSearchRunRm(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	dbPath := filepath.Join(tmp, "app.db")
+
+	// A named connection the saved query can run against.
+	if err := run([]string{"conn", "add", "--id", "app", "--driver", "sqlite", "--database", dbPath}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("conn add: %v", err)
+	}
+	// Seed a table so the saved SQL returns rows.
+	if err := run([]string{"app", "-e", "create table t(a int); insert into t values(7)"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// add
+	if err := run([]string{"saved", "add", "--title", "all t", "--conn", "app", "--sql", "select a from t", "--tags", "demo"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("saved add: %v", err)
+	}
+	// list
+	var list strings.Builder
+	if err := run([]string{"saved", "list"}, &list, io.Discard); err != nil {
+		t.Fatalf("saved list: %v", err)
+	}
+	if !strings.Contains(list.String(), "all t") || !strings.Contains(list.String(), "demo") {
+		t.Fatalf("saved list missing entry:\n%s", list.String())
+	}
+	// search by tag
+	var search strings.Builder
+	if err := run([]string{"saved", "search", "demo"}, &search, io.Discard); err != nil {
+		t.Fatalf("saved search: %v", err)
+	}
+	if !strings.Contains(search.String(), "all t") {
+		t.Fatalf("saved search missing entry:\n%s", search.String())
+	}
+	// run (#1)
+	var runOut strings.Builder
+	if err := run([]string{"saved", "run", "1", "--format", "json"}, &runOut, io.Discard); err != nil {
+		t.Fatalf("saved run: %v", err)
+	}
+	if !strings.Contains(runOut.String(), `"a":7`) {
+		t.Fatalf("saved run output unexpected:\n%s", runOut.String())
+	}
+	// rm
+	if err := run([]string{"saved", "rm", "1"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("saved rm: %v", err)
+	}
+	if err := run([]string{"saved", "rm", "1"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("expected error removing missing saved query")
+	}
+}
+
 func TestRunNamedConnection(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
