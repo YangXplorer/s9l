@@ -5,7 +5,7 @@
 ## 框架选型（已拍板）
 
 ```
-testing + google/go-cmp + testcontainers-go + golden file
+testing + google/go-cmp + testcontainers-go
 ```
 
 | 用途 | 选型 | 说明 |
@@ -13,7 +13,7 @@ testing + google/go-cmp + testcontainers-go + golden file
 | 测试主框架 | 标准库 `testing` | 表驱动 + `t.Run` 子测试为主，零依赖、最地道 |
 | 深度比较 | `google/go-cmp` | 替代断言库做结构体/slice/map 深比较（`cmp.Diff`），失败信息清晰 |
 | 容器化 IT | `testcontainers-go` | 测试内起 PG/MySQL 容器，自动销毁，CI/本地一致 |
-| Golden file | 标准库 + 自写 `-update` flag | render(table/json/csv) 输出断言 |
+| render 输出断言 | inline `go-cmp` 字面量 | render(table/json/csv/tsv) 用 `cmp.Diff` 对照内联期望字符串；如未来宽表/大输出确有需要再引 golden file |
 
 **明确不用**：`testify`（保持零断言框架、贴合极简偏好）、Ginkgo/Gomega（BDD 太重）。
 **备选（按需才引）**：`go-sqlmock`/`gomock` —— 优先用真 SQLite 内存库与手写假实现，少用 mock，避免"假绿"。
@@ -59,8 +59,8 @@ go test -short ./...
 # 完整（含容器化 IT，需 Docker）
 go test ./...
 
-# 刷新 render golden 文件
-go test ./internal/render -update
+# 只跑 render 输出格式测试
+go test ./internal/render
 
 # 大结果流式不 OOM 的冒烟基准
 go test -bench=. ./internal/driver/...

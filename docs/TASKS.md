@@ -103,14 +103,14 @@
   - 依赖：P1-B1 · 预估：0.5d
 
 ### C. 交互与输出
-- [ ] **P1-C1 输出渲染器（table/json/csv）**
-  - 产出：`internal/render/`，`--format table|json|csv`，默认 table
-  - DoD：三种格式正确输出，含 NULL 表示、宽表对齐
+- [x] **P1-C1 输出渲染器（table/json/csv）**
+  - 产出：`internal/render/format.go`，`--format table|json|csv|tsv`；`render.Write` 分发；JSON 保列序、NULL→null；CSV/TSV NULL→空字段
+  - DoD：四种格式正确输出 ✅，含 NULL 表示、宽表对齐（go-cmp 测试）✅
   - 依赖：P0-3 · 预估：1d
 
-- [ ] **P1-C2 管道友好（TTY 检测）**
-  - 产出：非 TTY（被管道/重定向）时默认输出 TSV 或 JSON，不打印边框/颜色
-  - DoD：`s9l mypg -e "..." | jq` / `> out.csv` 可解析
+- [x] **P1-C2 管道友好（TTY 检测）**
+  - 产出：`cmd/s9l` `outputFormat`/`isTTY`（mattn/go-isatty）：未显式 `--format` 时，TTY→table、非 TTY→tsv
+  - DoD：`s9l ... -e "..." | jq`（json）/ 重定向默认 tsv 可解析 ✅
   - 依赖：P1-C1 · 预估：0.25d
 
 - [ ] **P1-C3 REPL 模式**
