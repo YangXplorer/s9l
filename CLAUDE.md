@@ -1,6 +1,9 @@
 # CLAUDE.md
 
-このファイルは、このリポジトリで作業する際に Claude Code（claude.ai/code）が参照するガイドです。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> 注: このリポジトリは初期化直後で、まだソースコードがありません。以下のセクションはコード追加時に埋めてください。
+> コードが入った後に `/init` を再実行すれば、実態に合わせて自動補完できます。
 
 ## プロジェクト概要
 
