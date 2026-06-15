@@ -1,9 +1,6 @@
 package render
 
 import (
-	"bytes"
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 )
@@ -32,82 +29,28 @@ func ParseFormat(s string) (Format, error) {
 	}
 }
 
-// Write renders the result set in the given format.
+// Write renders an in-memory result set. It is a convenience wrapper over
+// WriteSource for callers that already hold all rows (e.g. tests). Streaming
+// callers should use WriteSource directly.
 func Write(w io.Writer, f Format, cols []string, rows [][]any) error {
-	switch f {
-	case FormatTable:
-		return Table(w, cols, rows)
-	case FormatJSON:
-		return writeJSON(w, cols, rows)
-	case FormatCSV:
-		return writeDelimited(w, ',', cols, rows)
-	case FormatTSV:
-		return writeDelimited(w, '\t', cols, rows)
-	default:
-		return fmt.Errorf("render: unknown format %q", f)
-	}
-}
-
-// writeJSON emits a JSON array of objects. Keys follow column order (which a
-// plain map would lose), and a SQL NULL becomes JSON null.
-func writeJSON(w io.Writer, cols []string, rows [][]any) error {
-	var buf bytes.Buffer
-	buf.WriteByte('[')
-	for i, row := range rows {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		buf.WriteByte('{')
-		for j, col := range cols {
-			if j > 0 {
-				buf.WriteByte(',')
-			}
-			k, err := json.Marshal(col)
-			if err != nil {
-				return err
-			}
-			var v []byte
-			if j < len(row) {
-				v, err = json.Marshal(row[j])
-			} else {
-				v, err = json.Marshal(nil)
-			}
-			if err != nil {
-				return err
-			}
-			buf.Write(k)
-			buf.WriteByte(':')
-			buf.Write(v)
-		}
-		buf.WriteByte('}')
-	}
-	buf.WriteByte(']')
-	buf.WriteByte('\n')
-	_, err := w.Write(buf.Bytes())
+	_, err := WriteSource(w, Options{Format: f}, &sliceSource{cols: cols, rows: rows})
 	return err
 }
 
-// writeDelimited emits CSV/TSV with a header row. A SQL NULL becomes an empty
-// field (machine formats favor parseability over a distinct NULL token).
-func writeDelimited(w io.Writer, comma rune, cols []string, rows [][]any) error {
-	cw := csv.NewWriter(w)
-	cw.Comma = comma
-	if err := cw.Write(cols); err != nil {
-		return err
+// sliceSource adapts an in-memory [][]any to a streaming Source.
+type sliceSource struct {
+	cols []string
+	rows [][]any
+	i    int
+}
+
+func (s *sliceSource) Columns() []string { return s.cols }
+
+func (s *sliceSource) Next() ([]any, bool, error) {
+	if s.i >= len(s.rows) {
+		return nil, false, nil
 	}
-	rec := make([]string, len(cols))
-	for _, row := range rows {
-		for i := range cols {
-			if i < len(row) && row[i] != nil {
-				rec[i] = fmt.Sprintf("%v", row[i])
-			} else {
-				rec[i] = ""
-			}
-		}
-		if err := cw.Write(rec); err != nil {
-			return err
-		}
-	}
-	cw.Flush()
-	return cw.Error()
+	row := s.rows[s.i]
+	s.i++
+	return row, true, nil
 }

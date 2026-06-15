@@ -14,6 +14,13 @@ const nullText = "NULL"
 
 // Table writes the result set as a simple left-aligned text table.
 func Table(w io.Writer, cols []string, rows [][]any) error {
+	return tableWith(w, cols, rows, 0)
+}
+
+// tableWith renders a table, truncating any cell longer than maxCellWidth runes
+// (0 means no limit). Truncation applies only to this human-facing format —
+// machine formats (csv/tsv/json) never truncate, to preserve data integrity.
+func tableWith(w io.Writer, cols []string, rows [][]any, maxCellWidth int) error {
 	widths := make([]int, len(cols))
 	for i, c := range cols {
 		widths[i] = len(c)
@@ -24,7 +31,7 @@ func Table(w io.Writer, cols []string, rows [][]any) error {
 		for i := range cols {
 			var s string
 			if i < len(row) {
-				s = format(row[i])
+				s = truncate(format(row[i]), maxCellWidth)
 			}
 			cells[r][i] = s
 			if len(s) > widths[i] {
