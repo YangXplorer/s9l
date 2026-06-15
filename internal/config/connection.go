@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+	"strconv"
+)
 
 // ConnectionConfig is one named connection. It never carries a plaintext
 // password — PasswordRef points at a secret resolved via the secret package
@@ -29,9 +33,43 @@ func (c ConnectionConfig) DSN(password string) (string, error) {
 			return "", fmt.Errorf("connection %q: sqlite requires a database path", c.ID)
 		}
 		return c.Database, nil
+	case "postgres":
+		return c.postgresDSN(password), nil
 	case "":
 		return "", fmt.Errorf("connection %q: missing driver", c.ID)
 	default:
 		return "", fmt.Errorf("connection %q: DSN building for driver %q not implemented yet", c.ID, c.Driver)
 	}
+}
+
+// postgresDSN builds a postgres:// URL. sslmode follows SSL (require/disable);
+// the password (if any) is added as userinfo so url escaping handles it.
+func (c ConnectionConfig) postgresDSN(password string) string {
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if c.Port > 0 {
+		host = host + ":" + strconv.Itoa(c.Port)
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		Host:   host,
+		Path:   "/" + c.Database,
+	}
+	if c.User != "" {
+		if password != "" {
+			u.User = url.UserPassword(c.User, password)
+		} else {
+			u.User = url.User(c.User)
+		}
+	}
+	q := url.Values{}
+	if c.SSL {
+		q.Set("sslmode", "require")
+	} else {
+		q.Set("sslmode", "disable")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }

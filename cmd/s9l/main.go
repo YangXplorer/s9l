@@ -25,6 +25,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	// Register the built-in drivers.
+	_ "github.com/YangXplorer/s9l/internal/driver/postgres"
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
 )
 

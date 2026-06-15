@@ -86,7 +86,19 @@ func TestDSN(t *testing.T) {
 	if _, err := (config.ConnectionConfig{ID: "x", Driver: "sqlite"}).DSN(""); err == nil {
 		t.Fatal("sqlite without database should error")
 	}
-	if _, err := (config.ConnectionConfig{ID: "x", Driver: "postgres"}).DSN(""); err == nil {
-		t.Fatal("postgres DSN should be unimplemented (error) in Phase 1 slice")
+
+	// postgres builds a postgres:// URL with escaped credentials and sslmode.
+	pg := config.ConnectionConfig{ID: "x", Driver: "postgres", Host: "db", Port: 5432, User: "dev", Database: "app", SSL: true}
+	got, err := pg.DSN("p@ss/word")
+	if err != nil {
+		t.Fatalf("postgres DSN: %v", err)
+	}
+	want := "postgres://dev:p%40ss%2Fword@db:5432/app?sslmode=require"
+	if got != want {
+		t.Fatalf("postgres DSN = %q, want %q", got, want)
+	}
+
+	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mysql"}).DSN(""); err == nil {
+		t.Fatal("unimplemented driver should error")
 	}
 }
