@@ -16,8 +16,10 @@ import (
 	"io"
 	"os"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/render"
+	"github.com/YangXplorer/s9l/internal/secret"
 
 	// Register the built-in drivers.
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
@@ -38,6 +40,10 @@ func main() {
 }
 
 func run(args []string, out, errOut io.Writer) error {
+	if len(args) > 0 && args[0] == "conn" {
+		return runConn(args[1:], out, errOut)
+	}
+
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	var (
@@ -46,10 +52,11 @@ func run(args []string, out, errOut io.Writer) error {
 		showVer    bool
 	)
 	fs.StringVar(&execSQL, "e", "", `execute SQL and exit`)
-	fs.StringVar(&driverName, "driver", "sqlite", "driver name ("+fmt.Sprint(driver.Names())+")")
+	fs.StringVar(&driverName, "driver", "sqlite", "driver name for a bare DSN ("+fmt.Sprint(driver.Names())+")")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
-		_, _ = fmt.Fprintln(errOut, `usage: s9l <dsn> -e "SQL"`)
+		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"`)
+		_, _ = fmt.Fprintln(errOut, `       s9l conn <list|add|rm>`)
 		fs.PrintDefaults()
 	}
 	// Parse flags that may appear before or after the positional DSN. The Go
@@ -75,20 +82,50 @@ func run(args []string, out, errOut io.Writer) error {
 
 	if len(positionals) < 1 {
 		fs.Usage()
-		return fmt.Errorf("missing <dsn>")
+		return errors.New("missing <connection-id|dsn>")
 	}
 	if execSQL == "" {
-		return errors.New(`-e "SQL" is required (Phase 0)`)
+		return errors.New(`-e "SQL" is required`)
+	}
+
+	drv, dsn, err := resolveTarget(positionals[0], driverName)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
-	conn, err := driver.Open(ctx, driverName, positionals[0])
+	conn, err := driver.Open(ctx, drv, dsn)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
 
 	return execute(ctx, out, conn, execSQL)
+}
+
+// resolveTarget maps the positional argument to a (driver, dsn) pair. If it
+// names a configured connection, that connection's driver/DSN (with its
+// password resolved) is used; otherwise it is treated as a bare DSN for the
+// driver given by the --driver flag.
+func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", "", err
+	}
+	cc, ok := cfg.Get(target)
+	if !ok {
+		return driverFlag, target, nil
+	}
+	// Phase 1 uses an in-memory secret store (env: refs work, keychain in P2).
+	password, err := secret.Resolve(secret.NewMemory(), cc.PasswordRef)
+	if err != nil {
+		return "", "", fmt.Errorf("connection %q: %w", cc.ID, err)
+	}
+	d, err := cc.DSN(password)
+	if err != nil {
+		return "", "", err
+	}
+	return cc.Driver, d, nil
 }
 
 func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string) error {
