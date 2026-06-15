@@ -1,0 +1,96 @@
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+
+	"github.com/YangXplorer/s9l/internal/config"
+)
+
+// runConn dispatches the `s9l conn <list|add|rm>` subcommands.
+func runConn(args []string, out, errOut io.Writer) error {
+	if len(args) < 1 {
+		return errors.New("usage: s9l conn <list|add|rm>")
+	}
+	switch args[0] {
+	case "list":
+		return connList(out)
+	case "add":
+		return connAdd(args[1:], errOut)
+	case "rm":
+		return connRm(args[1:])
+	default:
+		return fmt.Errorf("unknown conn subcommand %q (want list|add|rm)", args[0])
+	}
+}
+
+func connList(out io.Writer) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if len(cfg.Connections) == 0 {
+		_, err := fmt.Fprintln(out, "no connections configured")
+		return err
+	}
+	for _, c := range cfg.Connections {
+		desc := c.Driver
+		if c.Database != "" {
+			desc += " " + c.Database
+		}
+		if c.Host != "" {
+			desc += fmt.Sprintf(" %s@%s:%d", c.User, c.Host, c.Port)
+		}
+		if _, err := fmt.Fprintf(out, "%s\t%s\n", c.ID, desc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func connAdd(args []string, errOut io.Writer) error {
+	fs := flag.NewFlagSet("s9l conn add", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	var c config.ConnectionConfig
+	fs.StringVar(&c.ID, "id", "", "connection id (required)")
+	fs.StringVar(&c.Name, "name", "", "display name")
+	fs.StringVar(&c.Driver, "driver", "", "driver (required), e.g. sqlite/postgres")
+	fs.StringVar(&c.Host, "host", "", "host")
+	fs.IntVar(&c.Port, "port", 0, "port")
+	fs.StringVar(&c.User, "user", "", "user")
+	fs.StringVar(&c.Database, "database", "", "database name or sqlite file path")
+	fs.BoolVar(&c.SSL, "ssl", false, "use SSL/TLS")
+	fs.StringVar(&c.Charset, "charset", "", "charset")
+	fs.StringVar(&c.PasswordRef, "password-ref", "", "password reference, e.g. env:PGPASSWORD or keychain://s9l/connection.<id>.password")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if c.Driver == "" {
+		return errors.New("conn add: --driver is required")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Add(c); err != nil {
+		return err
+	}
+	return cfg.Save()
+}
+
+func connRm(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: s9l conn rm <id>")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if !cfg.Remove(args[0]) {
+		return fmt.Errorf("connection %q not found", args[0])
+	}
+	return cfg.Save()
+}
