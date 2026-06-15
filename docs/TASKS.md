@@ -180,10 +180,10 @@
   - 依赖：P1-F1 · 预估：0.5d
   - 注：database_name 暂留空（后续按命名连接补全）；REPL 接入后每条 REPL 查询亦复用 recordHistory
 
-- [ ] **P1-F3 收藏命令（CLI）**
-  - 产出：`s9l saved add/list/search/rm/run`（Store 已就绪，仅缺 CLI 装配）
-  - DoD：能保存、列出、按关键字/标签搜索、执行收藏的 SQL
-  - 依赖：P1-F1 · 预估：0.5d · 注：下一个 PR
+- [x] **P1-F3 收藏命令（CLI）**
+  - 产出：`cmd/s9l/saved.go`：`s9l saved add/list/search/rm/run`；`run` 复用 `runQuery`（解析连接+执行+记历史）；`--format`/位置参数前后混排（`parseFlagsInterspersed`）
+  - DoD：保存/列出/按关键字·标签搜索/按 connection 过滤/执行收藏 SQL 全部可用 ✅
+  - 依赖：P1-F1 · 预估：0.5d · 注：清理了 `internal/query` 空占位（逻辑落在 internal/history）
 
 **Phase 1 验收**：`s9l mypg` REPL 查询、`\dt`/`\d` 可用、`-e` + 管道导出 CSV 可用、命名连接增删查可用、查询历史自动记录、SQL 收藏可用、README 完整、CI 含集成测试。
 

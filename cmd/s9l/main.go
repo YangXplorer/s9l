@@ -49,6 +49,9 @@ func run(args []string, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "history" {
 		return runHistory(args[1:], out, errOut)
 	}
+	if len(args) > 0 && args[0] == "saved" {
+		return runSaved(args[1:], out, errOut)
+	}
 
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -67,20 +70,9 @@ func run(args []string, out, errOut io.Writer) error {
 		_, _ = fmt.Fprintln(errOut, `       s9l conn <list|add|rm>`)
 		fs.PrintDefaults()
 	}
-	// Parse flags that may appear before or after the positional DSN. The Go
-	// flag package stops at the first non-flag argument, so we loop: parse,
-	// peel off one positional, parse the rest, repeat.
-	var positionals []string
-	rest := args
-	for {
-		if err := fs.Parse(rest); err != nil {
-			return err
-		}
-		if fs.NArg() == 0 {
-			break
-		}
-		positionals = append(positionals, fs.Arg(0))
-		rest = fs.Args()[1:]
+	positionals, err := parseFlagsInterspersed(fs, args)
+	if err != nil {
+		return err
 	}
 
 	if showVer {
@@ -101,12 +93,17 @@ func run(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	drv, dsn, err := resolveTarget(positionals[0], driverName)
+	return runQuery(context.Background(), out, errOut, positionals[0], driverName, execSQL, format)
+}
+
+// runQuery resolves target to a connection, runs sql, renders the result, and
+// records history (best-effort). It is shared by the `-e` path and `saved run`.
+func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, format render.Format) error {
+	drv, dsn, err := resolveTarget(target, driverFlag)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
 	conn, err := driver.Open(ctx, drv, dsn)
 	if err != nil {
 		return err
@@ -114,10 +111,29 @@ func run(args []string, out, errOut io.Writer) error {
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
-	rowCount, qerr := execute(ctx, out, conn, execSQL, format)
+	rowCount, qerr := execute(ctx, out, conn, sql, format)
 	// History recording is best-effort and must not affect the query result.
-	recordHistory(errOut, positionals[0], execSQL, time.Since(start), rowCount, qerr)
+	recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 	return qerr
+}
+
+// parseFlagsInterspersed parses fs allowing flags to appear before or after
+// positional arguments. The Go flag package stops at the first non-flag
+// argument, so we loop: parse, peel off one positional, parse the rest.
+func parseFlagsInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positionals = append(positionals, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+	return positionals, nil
 }
 
 // outputFormat picks the result format: the explicit --format flag if given,
