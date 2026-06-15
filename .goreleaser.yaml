@@ -1,0 +1,46 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: s9l
+    main: ./cmd/s9l
+    binary: s9l
+    env:
+      - CGO_ENABLED=0 # pure-Go drivers; keeps cross-compilation and a single static binary
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: YangXplorer
+    name: s9l
+  prerelease: auto # tags like v0.1.0-rc.1 are marked as pre-releases
+
+# Homebrew tap (v0.2), deb/rpm and docker (v0.3) land later — see docs/RELEASE.md.
