@@ -19,6 +19,24 @@ func TestRunExecSelect(t *testing.T) {
 	}
 }
 
+func TestRunFormatJSON(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var out strings.Builder
+	if err := run([]string{":memory:", "-e", "select 1 as n", "--format", "json"}, &out, io.Discard); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != `[{"n":1}]` {
+		t.Fatalf("json output = %q, want [{\"n\":1}]", got)
+	}
+}
+
+func TestRunBadFormat(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := run([]string{":memory:", "-e", "select 1", "--format", "xml"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+}
+
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
 	if err := run([]string{"-version"}, &out, io.Discard); err != nil {
