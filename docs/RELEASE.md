@@ -286,6 +286,6 @@ release:
 
 ## 7. 待确认
 
-1. **许可证**：goreleaser/nfpm/Homebrew 都需要 LICENSE。建议 **MIT**（OSS CLI 通用、最宽松）—— 确认即在仓库加 `LICENSE`。
+1. ~~许可证~~ → 已定 **MIT**，已加 `LICENSE`（Copyright 2026 YangXplorer）。
 2. Docker 镜像仓库用 **ghcr.io**（与 GitHub 同源，免额外配 Docker Hub）还是 Docker Hub？默认 ghcr。
 3. `integration` job 默认每个 PR 都跑，还是仅 main/nightly？默认每 PR 跑，过慢再降。
