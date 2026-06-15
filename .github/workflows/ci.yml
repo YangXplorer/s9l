@@ -21,9 +21,11 @@ jobs:
         with:
           go-version: stable
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # v2 line is built with a recent Go toolchain so it can analyze the
+          # go 1.25 module (the v1 line is built with go1.24 and refuses).
+          version: v2.12.2
 
   test:
     runs-on: ubuntu-latest
