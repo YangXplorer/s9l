@@ -143,8 +143,8 @@
   - 依赖：P1-E2 · 预估：0.75d · 详见 [RELEASE.md](./RELEASE.md)
 
 ### F. 历史与收藏（SQLite，v0.1 纳入）
-- [ ] **P1-F1 history.db 初始化 + 迁移**
-  - 产出：`internal/history/sqlite.go`，在 `~/.config/s9l/history.db` 建库；内嵌迁移建表 `query_history` / `saved_queries`
+- [x] **P1-F1 history.db 初始化 + 迁移**
+  - 产出：`internal/history/{history.go,saved.go}`，在 `~/.config/s9l/history.db`(XDG, 0600) 建库；内嵌迁移建表 `query_history` / `saved_queries`；Store 含两表完整 CRUD（AddHistory/ListHistory + SaveQuery/GetSaved/ListSaved/SearchSaved/DeleteSaved）
   - DDL：
     ```sql
     CREATE TABLE query_history (
@@ -170,18 +170,20 @@
       updated_at DATETIME NOT NULL
     );
     ```
-  - DoD：首次运行自动建库建表；重复运行迁移幂等
-  - 依赖：P0-2, P0-4（复用 sqlite 驱动）· 预估：0.5d
+  - DoD：首次运行自动建库建表 ✅；重复运行迁移幂等 ✅
+  - 依赖：P0-2, P0-4（复用 modernc.org/sqlite，直连 database/sql）· 预估：0.5d
+  - 注：history 是 s9l 自身存储，直接用 database/sql，不走 Driver 抽象
 
-- [ ] **P1-F2 执行后写历史**
-  - 产出：`internal/query/history.go`，每次执行（含失败）写入 `query_history`，记录 `duration_ms`/`rows_affected`/`success`/`error_message`
-  - DoD：成功与失败查询都落历史；写历史失败不影响主流程（降级告警）
-  - 依赖：P1-F1, P1-B2 · 预估：0.5d
+- [x] **P1-F2 执行后写历史**
+  - 产出：`cmd/s9l/history.go` `recordHistory`，`-e` 每次执行（含失败）写入 `query_history`（duration_ms/rows_affected/success/error_message）；`s9l history [--limit N]` 列出
+  - DoD：成功与失败查询都落历史 ✅；写历史失败不影响主流程（stderr 降级告警）✅
+  - 依赖：P1-F1 · 预估：0.5d
+  - 注：database_name 暂留空（后续按命名连接补全）；REPL 接入后每条 REPL 查询亦复用 recordHistory
 
-- [ ] **P1-F3 收藏命令**
-  - 产出：`internal/query/saved.go` + CLI/REPL：`save`/`list`/`search`/`run <id>`，支持按 `connection_id`/`tags` 筛选
+- [ ] **P1-F3 收藏命令（CLI）**
+  - 产出：`s9l saved add/list/search/rm/run`（Store 已就绪，仅缺 CLI 装配）
   - DoD：能保存、列出、按关键字/标签搜索、执行收藏的 SQL
-  - 依赖：P1-F1 · 预估：0.75d
+  - 依赖：P1-F1 · 预估：0.5d · 注：下一个 PR
 
 **Phase 1 验收**：`s9l mypg` REPL 查询、`\dt`/`\d` 可用、`-e` + 管道导出 CSV 可用、命名连接增删查可用、查询历史自动记录、SQL 收藏可用、README 完整、CI 含集成测试。
 
