@@ -121,11 +121,11 @@
   - 注：`;` 朴素分割（字符串字面量内的 `;` 暂不特殊处理）；上下键历史由 readline 提供（交互态）
 
 ### D. 便捷命令
-- [ ] **P1-D1 元数据反斜杠命令**
-  - 产出：REPL 与 `-e` 均支持 `\l`(库)、`\dt`(表列表)、`\d <table>`(表结构)
-  - 实现：每个 driver 提供 `Metadata` 方法返回结构化结果，渲染复用 C1
-  - DoD：SQLite + PG 下三命令都返回正确结构
-  - 依赖：P1-B1, P1-C1 · 预估：1d · 注：方言差异点，验证抽象
+- [x] **P1-D1 元数据反斜杠命令**
+  - 产出：REPL 与 `-e` 均支持 `\l`(库)、`\dt`(表)、`\d [table]`(表结构/列表)、`\?`(帮助)；`driver.Metadata` 可选能力接口（Databases/Tables/Columns），SQLite 用 pragma/sqlite_master 实现；渲染复用 render.Write
+  - 实现：`cmd/s9l/meta.go`(runStatement/runMeta)；REPL Loop 对反斜杠命令行级即时分发（无需 `;`）
+  - DoD：SQLite 下 `\l`/`\dt`/`\d`/`\?` 正确 ✅；未实现 Metadata 的 driver 报清晰错误 ✅
+  - 依赖：P1-C1 · 预估：1d · 注：PG 的 Metadata 实现随 P1-B1 落地（方言差异下沉到各 driver）
 
 ### E. 工程化
 - [ ] **P1-E1 集成测试（testcontainers）**

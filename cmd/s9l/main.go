@@ -113,7 +113,7 @@ func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sq
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
-	rowCount, qerr := execute(ctx, out, conn, sql, format)
+	rowCount, qerr := runStatement(ctx, out, conn, sql, format)
 	// History recording is best-effort and must not affect the query result.
 	recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 	return qerr
@@ -188,6 +188,12 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, f
 	if err != nil {
 		return 0, err
 	}
+	return drainAndRender(out, format, rows)
+}
+
+// drainAndRender consumes rows and renders them, returning the row count.
+// Statements that return no columns (DDL/DML) render nothing.
+func drainAndRender(out io.Writer, format render.Format, rows driver.Rows) (int, error) {
 	defer func() { _ = rows.Close() }()
 
 	cols := rows.Columns()
@@ -202,8 +208,6 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, f
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	// Statements that return no columns (DDL/DML like CREATE/INSERT) have no
-	// result set to render — emit nothing.
 	if len(cols) == 0 {
 		return 0, nil
 	}

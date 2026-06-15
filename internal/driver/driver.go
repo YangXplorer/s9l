@@ -58,6 +58,20 @@ type Result interface {
 	RowsAffected() (int64, error)
 }
 
+// Metadata is an optional capability a Conn may also implement to introspect
+// the schema, backing the \l, \dt and \d meta-commands. Each result is a normal
+// streaming Rows so it renders through the same path as a query. Drivers that
+// don't implement it simply don't support those commands. The dialect-specific
+// SQL lives in each driver, keeping these differences out of the core.
+type Metadata interface {
+	// Databases lists databases/schemas (\l).
+	Databases(ctx context.Context) (Rows, error)
+	// Tables lists tables in the current database (\dt).
+	Tables(ctx context.Context) (Rows, error)
+	// Columns describes the columns of a table (\d <table>).
+	Columns(ctx context.Context, table string) (Rows, error)
+}
+
 var registry = map[string]Driver{}
 
 // Register makes a driver available by its Name. It is intended to be called

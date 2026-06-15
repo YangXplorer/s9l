@@ -65,6 +65,42 @@ func TestRunExecNoResultSet(t *testing.T) {
 	}
 }
 
+func TestRunMetaCommands(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	db := filepath.Join(tmp, "m.db")
+
+	if err := run([]string{"conn", "add", "--id", "m", "--driver", "sqlite", "--database", db}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("conn add: %v", err)
+	}
+	if err := run([]string{"m", "-e", "create table widgets(id int, label text)"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// \dt lists the table.
+	var dt strings.Builder
+	if err := run([]string{"m", "-e", `\dt`, "--format", "csv"}, noInput(), &dt, io.Discard); err != nil {
+		t.Fatalf("\\dt: %v", err)
+	}
+	if !strings.Contains(dt.String(), "widgets") {
+		t.Fatalf("\\dt missing table:\n%s", dt.String())
+	}
+
+	// \d <table> describes columns.
+	var d strings.Builder
+	if err := run([]string{"m", "-e", `\d widgets`, "--format", "csv"}, noInput(), &d, io.Discard); err != nil {
+		t.Fatalf("\\d: %v", err)
+	}
+	if !strings.Contains(d.String(), "label") {
+		t.Fatalf("\\d missing column:\n%s", d.String())
+	}
+
+	// Unknown backslash command errors.
+	if err := run([]string{"m", "-e", `\nope`}, noInput(), io.Discard, io.Discard); err == nil {
+		t.Fatal("expected error for unknown meta command")
+	}
+}
+
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
 	if err := run([]string{"-version"}, noInput(), &out, io.Discard); err != nil {

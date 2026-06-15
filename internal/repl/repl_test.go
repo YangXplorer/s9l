@@ -94,6 +94,19 @@ func TestLoopQuitAfterStatement(t *testing.T) {
 	}
 }
 
+func TestLoopBackslashLineDispatch(t *testing.T) {
+	// Backslash commands are line-oriented: dispatched on Enter, no `;` needed.
+	var got []string
+	lr := newReader(`\dt`, "select 1;")
+	if err := repl.Loop(lr, io.Discard, collectExec(&got)); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	want := []string{`\dt`, "select 1"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestLoopInterruptDiscardsBuffer(t *testing.T) {
 	var got []string
 	lr := &sliceReader{

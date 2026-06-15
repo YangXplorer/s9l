@@ -38,7 +38,7 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 
 	exec := func(sql string) error {
 		start := time.Now()
-		rowCount, qerr := execute(ctx, out, conn, sql, format)
+		rowCount, qerr := runStatement(ctx, out, conn, sql, format)
 		recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 		return qerr
 	}

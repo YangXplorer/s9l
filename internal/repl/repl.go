@@ -48,9 +48,17 @@ func Loop(lr LineReader, errOut io.Writer, exec ExecFunc) error {
 			return err
 		}
 
-		// A bare quit command (no pending statement buffered) ends the loop.
-		if quitCommands[strings.TrimSpace(line)] && strings.TrimSpace(buf.String()) == "" {
-			return nil
+		// Backslash commands and quit are line-oriented (no trailing `;`), but
+		// only when no SQL statement is currently buffered.
+		if strings.TrimSpace(buf.String()) == "" {
+			trimmed := strings.TrimSpace(line)
+			if quitCommands[trimmed] {
+				return nil
+			}
+			if strings.HasPrefix(trimmed, `\`) {
+				dispatch(trimmed, errOut, exec)
+				continue
+			}
 		}
 
 		buf.WriteString(line)
