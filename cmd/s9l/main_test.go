@@ -86,6 +86,30 @@ func TestConnAddListRm(t *testing.T) {
 	}
 }
 
+func TestHistoryRecordedAndListed(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// A successful query and a failing one are both recorded.
+	if err := run([]string{":memory:", "-e", "select 1 as n"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run ok: %v", err)
+	}
+	if err := run([]string{":memory:", "-e", "select * from nope"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("expected query error")
+	}
+
+	var out strings.Builder
+	if err := run([]string{"history"}, &out, io.Discard); err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "select 1 as n") {
+		t.Errorf("history missing successful query:\n%s", got)
+	}
+	if !strings.Contains(got, "ERR") {
+		t.Errorf("history missing failed query marker:\n%s", got)
+	}
+}
+
 func TestRunNamedConnection(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)

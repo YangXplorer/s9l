@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
@@ -44,6 +45,9 @@ func main() {
 func run(args []string, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "conn" {
 		return runConn(args[1:], out, errOut)
+	}
+	if len(args) > 0 && args[0] == "history" {
+		return runHistory(args[1:], out, errOut)
 	}
 
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
@@ -109,7 +113,11 @@ func run(args []string, out, errOut io.Writer) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	return execute(ctx, out, conn, execSQL, format)
+	start := time.Now()
+	rowCount, qerr := execute(ctx, out, conn, execSQL, format)
+	// History recording is best-effort and must not affect the query result.
+	recordHistory(errOut, positionals[0], execSQL, time.Since(start), rowCount, qerr)
+	return qerr
 }
 
 // outputFormat picks the result format: the explicit --format flag if given,
@@ -155,10 +163,12 @@ func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
 	return cc.Driver, d, nil
 }
 
-func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, format render.Format) error {
+// execute runs the SQL and renders the result, returning the number of rows
+// rendered (for history bookkeeping).
+func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, format render.Format) (int, error) {
 	rows, err := conn.Query(ctx, sql)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -167,12 +177,15 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, f
 	for rows.Next() {
 		vals, err := rows.Values()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		data = append(data, vals)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
-	return render.Write(out, format, cols, data)
+	if err := render.Write(out, format, cols, data); err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
