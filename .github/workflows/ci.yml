@@ -54,8 +54,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
-      - run: go build ./...
+      # Dry-run the release across all platforms to catch .goreleaser.yaml
+      # errors on every PR, not just at tag time.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean

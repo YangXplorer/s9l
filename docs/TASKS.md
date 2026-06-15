@@ -133,14 +133,14 @@
   - DoD：本地实测 conformance+metadata 对真实 PG 全 PASS ✅；`-short` 跳过容器测试 ✅；CI integration job 就位
   - 依赖：P1-B1 · 预估：1d
 
-- [ ] **P1-E2 README + 安装说明**
-  - 产出：README（特性、安装 `go install`、快速上手、config 示例、命令速查）
-  - DoD：照着 README 能从零连上 PG 跑查询
+- [x] **P1-E2 README + 安装说明**
+  - 产出：`README.md`（特性、`go install`、快速上手、config 示例 + `password_ref`、命令速查、开发）；`LICENSE`（MIT）
+  - DoD：README 含从 `conn add` 到连 PG 跑查询的完整示例 ✅
   - 依赖：MVP 功能完成 · 预估：0.5d
 
-- [ ] **P1-E3 Release 流程（goreleaser + GitHub Actions）**
-  - 产出：`.goreleaser.yaml`(最小版) + `.github/workflows/release.yml`；`cmd/s9l/main.go` 预留 `version/commit/date` ldflags 变量；CI 的 `build` job 加 `goreleaser release --snapshot --clean` 干跑
-  - DoD：打 tag `v*` 自动出多平台二进制 + checksums + GitHub Release；`s9l --version` 可查；`go install .../cmd/s9l@latest` 可装
+- [x] **P1-E3 Release 流程（goreleaser + GitHub Actions）**
+  - 产出：`.goreleaser.yaml`(v2，CGO_ENABLED=0，linux/darwin/windows×amd64/arm64) + `.github/workflows/release.yml`(tag `v*` 触发)；`cmd/s9l/main.go` 的 `version/commit/date` ldflags 注入；CI `build` job 改为 `goreleaser release --snapshot --clean` 干跑
+  - DoD：本地 `goreleaser check` 通过、snapshot 出全平台二进制、`--version` 注入正确 ✅；打 tag 自动发布（待首次 tag 远端验证）
   - 依赖：P1-E2 · 预估：0.75d · 详见 [RELEASE.md](./RELEASE.md)
 
 ### F. 历史与收藏（SQLite，v0.1 纳入）
