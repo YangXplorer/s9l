@@ -113,11 +113,12 @@
   - DoD：`s9l ... -e "..." | jq`（json）/ 重定向默认 tsv 可解析 ✅
   - 依赖：P1-C1 · 预估：0.25d
 
-- [ ] **P1-C3 REPL 模式**
-  - 产出：`internal/repl/`，进入交互式：多行输入（以 `;` 结束）、历史（上下键）、`Ctrl-C` 取消当前输入、`Ctrl-D` 退出
-  - 选库：`chzyer/readline` 或 `charmbracelet/bubbline`/`go-prompt`（待 tech lead 定）
-  - DoD：`s9l mypg` 进 REPL，可连续执行多条 SQL
+- [x] **P1-C3 REPL 模式**
+  - 产出：`internal/repl/repl.go`（端末非依存的 Loop：多行输入以 `;` 分割、`\q`/quit/exit 退出、Ctrl-C 丢弃当前缓冲、EOF 退出、exec 错误不中断）+ `cmd/s9l/repl.go`（TTY 用 `chzyer/readline`，非 TTY 用 scanner；连接复用一次、每条记历史）
+  - 选库：**chzyer/readline**（纯 Go、成熟、历史/行编辑/Ctrl-C/D）
+  - DoD：`s9l <id>`（无 `-e`）进 REPL，连续执行多条 SQL ✅；DDL/DML 无空输出（execute 列零跳过渲染）
   - 依赖：P1-A2, P1-C1 · 预估：1.5d
+  - 注：`;` 朴素分割（字符串字面量内的 `;` 暂不特殊处理）；上下键历史由 readline 提供（交互态）
 
 ### D. 便捷命令
 - [ ] **P1-D1 元数据反斜杠命令**

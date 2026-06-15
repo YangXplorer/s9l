@@ -36,13 +36,13 @@ var (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "s9l:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, out, errOut io.Writer) error {
+func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "conn" {
 		return runConn(args[1:], out, errOut)
 	}
@@ -84,16 +84,18 @@ func run(args []string, out, errOut io.Writer) error {
 		fs.Usage()
 		return errors.New("missing <connection-id|dsn>")
 	}
-	if execSQL == "" {
-		return errors.New(`-e "SQL" is required`)
-	}
 
 	format, err := outputFormat(formatFlag, out)
 	if err != nil {
 		return err
 	}
 
-	return runQuery(context.Background(), out, errOut, positionals[0], driverName, execSQL, format)
+	ctx := context.Background()
+	if execSQL == "" {
+		// No -e: drop into the interactive REPL.
+		return runREPL(ctx, in, out, errOut, positionals[0], driverName, format)
+	}
+	return runQuery(ctx, out, errOut, positionals[0], driverName, execSQL, format)
 }
 
 // runQuery resolves target to a connection, runs sql, renders the result, and
@@ -199,6 +201,11 @@ func execute(ctx context.Context, out io.Writer, conn driver.Conn, sql string, f
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
+	}
+	// Statements that return no columns (DDL/DML like CREATE/INSERT) have no
+	// result set to render — emit nothing.
+	if len(cols) == 0 {
+		return 0, nil
 	}
 	if err := render.Write(out, format, cols, data); err != nil {
 		return 0, err
