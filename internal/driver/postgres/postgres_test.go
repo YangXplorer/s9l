@@ -23,16 +23,19 @@ func startPostgres(t *testing.T) string {
 		t.Skip("skip integration test (needs Docker); run without -short")
 	}
 	ctx := context.Background()
-	// Wait on the TCP port: the official postgres image runs a temporary
-	// socket-only server during init, then restarts with TCP listening — so the
-	// 5432 port only opens for the final, ready server. (A log-based wait can
-	// match the temporary server and cause "connection reset by peer".)
+	// The official postgres image runs a temporary server during init, then
+	// restarts. Connecting in that window yields "connection reset by peer".
+	// Wait for BOTH the readiness log to appear twice (init server + final
+	// server) AND the TCP port to open, so we only connect to the final server.
 	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("app"),
 		tcpostgres.WithUsername("dev"),
 		tcpostgres.WithPassword("secret"),
 		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("5432/tcp").WithStartupTimeout(90*time.Second),
+			wait.ForAll(
+				wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
+				wait.ForListeningPort("5432/tcp"),
+			).WithDeadline(120*time.Second),
 		),
 	)
 	if err != nil {
