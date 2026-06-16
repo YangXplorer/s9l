@@ -3,16 +3,13 @@ package mysql_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/driver/drivertest"
 
 	_ "github.com/YangXplorer/s9l/internal/driver/mysql"
 
-	"github.com/testcontainers/testcontainers-go"
 	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // startMySQL spins up a throwaway MySQL container and returns its DSN. These are
@@ -23,13 +20,12 @@ func startMySQL(t *testing.T) string {
 		t.Skip("skip integration test (needs Docker); run without -short")
 	}
 	ctx := context.Background()
+	// Rely on the module's built-in readiness wait (it waits until MySQL
+	// actually accepts connections — the port opening alone is not enough).
 	ctr, err := tcmysql.Run(ctx, "mysql:8.4",
 		tcmysql.WithDatabase("app"),
 		tcmysql.WithUsername("dev"),
 		tcmysql.WithPassword("secret"),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("3306/tcp").WithStartupTimeout(180*time.Second),
-		),
 	)
 	if err != nil {
 		t.Fatalf("start mysql container: %v", err)
