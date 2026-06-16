@@ -234,10 +234,10 @@
   - 产出：左下 TreeView，连接成功后 `loadSchema` 经 `driver.Metadata.Tables()` 列出当前库的表；表节点以表名为 reference（供 T-1c 选表查询）；无 Metadata 能力/错误时给提示/进 status 不崩溃；`collectFirstColumn` 读元数据首列
   - DoD：树正确展示当前连接库的表（SQLite 白盒测试；PG/MySQL 走同一 Metadata 路径，已有各自 metadata IT）✅
   - 依赖：T-1a · 预估：0.75d · 注：单连接只见一个库；跨库切换（库→表 多级）留作后续强化
-- [ ] **T-1c 结果表格 + 选表查询**
-  - 产出：主区 `tview.Table`；`Enter` 选表 → `SELECT * FROM t LIMIT N`（N 可配）→ 填表格；NULL/宽列处理；上下/翻页/横向滚动；status 显示行数/耗时
-  - DoD：选表即见结果，可滚动；空结果/NULL 正常；查询走可取消 context
-  - 依赖：T-1b · 预估：1d
+- [x] **T-1c 结果表格 + 选表查询**
+  - 产出：schema 树 `Enter` 表节点 → `runTableQuery` → `SELECT * FROM <quoteIdent> LIMIT 200` → `runQuery` 填 `tview.Table`（表头固定+加粗、NULL→"NULL"、行可选可滚动）；status 显示行数/耗时；`quoteIdent` 按方言转义(mysql 反引号/其余双引号)；`drainRows`/`cellString` 辅助
+  - DoD：选表即见结果（白盒 `TestRunTableQueryFillsResults`：表头+2行+NULL 正确）✅；空结果/NULL 正常 ✅；错误进 status 不崩溃
+  - 依赖：T-1b · 预估：1d · 注：当前同步执行（可取消 context 是 T-2b）；查询历史记录随 T-3
 - [ ] **T-1d 面板切换 + 帮助 + 退出**
   - 产出：`Tab`/`1-3` 切面板、面板内导航、`?` 帮助浮层、`q` 退出
   - DoD：键盘可在三面板间流畅操作；`?` 列出键位

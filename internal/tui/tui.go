@@ -10,7 +10,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
@@ -20,7 +22,12 @@ import (
 	"github.com/rivo/tview"
 )
 
-const sidebarWidth = 30
+const (
+	sidebarWidth = 30
+	// resultLimit caps rows fetched when browsing a table (full control via the
+	// SQL editor lands in T-2a).
+	resultLimit = 200
+)
 
 // Options configures the TUI.
 type Options struct {
@@ -45,8 +52,9 @@ type App struct {
 	editor   *tview.TextView
 	status   *tview.TextView
 
-	conn   driver.Conn
-	connID string
+	conn       driver.Conn
+	connID     string
+	driverName string
 
 	ready sync.Once
 }
@@ -87,9 +95,11 @@ func (a *App) buildLayout() {
 	a.connList.SetBorder(true).SetTitle(" Connections ")
 
 	a.schema = tview.NewTreeView()
+	a.schema.SetSelectedFunc(a.onSchemaSelect)
 	a.schema.SetBorder(true).SetTitle(" Schema ")
 
 	a.results = tview.NewTable().SetBorders(false).SetFixed(1, 0)
+	a.results.SetSelectable(true, false)
 	a.results.SetBorder(true).SetTitle(" Results ")
 
 	a.editor = tview.NewTextView()
@@ -151,9 +161,101 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	}
 	a.conn = conn
 	a.connID = cc.ID
+	a.driverName = cc.Driver
 	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)   %s", cc.ID, cc.Driver, defaultStatus))
 	a.loadSchema()
 	return nil
+}
+
+// onSchemaSelect handles Enter on a schema node: a table node (its reference is
+// the table name) runs a preview query; the root node toggles expansion.
+func (a *App) onSchemaSelect(node *tview.TreeNode) {
+	table, ok := node.GetReference().(string)
+	if !ok || table == "" {
+		node.SetExpanded(!node.IsExpanded())
+		return
+	}
+	a.runTableQuery(table)
+}
+
+// runTableQuery previews a table: SELECT * ... LIMIT resultLimit. The table name
+// is quoted per dialect to tolerate reserved words / special characters.
+func (a *App) runTableQuery(table string) {
+	a.runQuery(fmt.Sprintf("SELECT * FROM %s LIMIT %d", quoteIdent(a.driverName, table), resultLimit))
+}
+
+// runQuery executes sql on the current connection and renders the result into
+// the Results table. Errors go to the status bar. (Async execution and
+// cancellation arrive in T-2b; history recording in T-3.)
+func (a *App) runQuery(sql string) {
+	if a.conn == nil {
+		a.setError("not connected")
+		return
+	}
+	start := time.Now()
+	rows, err := a.conn.Query(context.Background(), sql)
+	if err != nil {
+		a.setError(err.Error())
+		return
+	}
+	cols, data, err := drainRows(rows)
+	if err != nil {
+		a.setError(err.Error())
+		return
+	}
+	a.fillResults(cols, data)
+	a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(data), time.Since(start).Round(time.Millisecond), defaultStatus))
+}
+
+// fillResults renders columns + rows into the Results table (header fixed).
+func (a *App) fillResults(cols []string, data [][]any) {
+	a.results.Clear()
+	for c, name := range cols {
+		a.results.SetCell(0, c, tview.NewTableCell(name).
+			SetSelectable(false).
+			SetAttributes(tcell.AttrBold).
+			SetTextColor(tcell.ColorYellow))
+	}
+	for r, row := range data {
+		for c := range cols {
+			var s string
+			if c < len(row) {
+				s = cellString(row[c])
+			}
+			a.results.SetCell(r+1, c, tview.NewTableCell(s))
+		}
+	}
+	a.results.ScrollToBeginning()
+}
+
+func drainRows(rows driver.Rows) ([]string, [][]any, error) {
+	defer func() { _ = rows.Close() }()
+	cols := rows.Columns()
+	var data [][]any
+	for rows.Next() {
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, nil, err
+		}
+		data = append(data, vals)
+	}
+	return cols, data, rows.Err()
+}
+
+func cellString(v any) string {
+	if v == nil {
+		return "NULL"
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// quoteIdent quotes a SQL identifier for the given driver (backticks for MySQL,
+// double quotes otherwise), escaping the quote char.
+func quoteIdent(driverName, name string) string {
+	if driverName == "mysql" {
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	}
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // loadSchema populates the schema tree with the connected database's tables via
