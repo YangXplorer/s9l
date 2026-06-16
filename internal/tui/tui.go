@@ -17,6 +17,7 @@ import (
 
 	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
+	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
@@ -38,6 +39,9 @@ type Options struct {
 	Config *config.Config
 	// Store resolves password references. If nil, an in-memory store is used.
 	Store secret.SecretStore
+	// History records/queries history. If nil, history features are disabled
+	// (New does no I/O); the cmd layer provides the real store.
+	History *history.Store
 }
 
 // App is the s9l TUI application.
@@ -47,6 +51,7 @@ type App struct {
 
 	cfg   *config.Config
 	store secret.SecretStore
+	hist  *history.Store
 
 	connList *tview.List
 	schema   *tview.TreeView
@@ -54,8 +59,9 @@ type App struct {
 	editor   *tview.TextArea
 	status   *tview.TextView
 
-	focusIdx int
-	helpOpen bool
+	focusIdx    int
+	helpOpen    bool
+	historyOpen bool
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -73,6 +79,7 @@ func New(opts Options) *App {
 		app:   tview.NewApplication(),
 		cfg:   opts.Config,
 		store: opts.Store,
+		hist:  opts.History,
 	}
 	if a.cfg == nil {
 		if cfg, err := config.Load(); err == nil {
@@ -187,6 +194,7 @@ const helpText = `[::b]s9l TUI[::-]
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
   F5                run SQL editor
+  Ctrl-R            query history (Enter loads it)
   Up / Down         navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
@@ -260,8 +268,8 @@ type queryResult struct {
 }
 
 // runQuery executes sql off the UI goroutine so the interface stays responsive,
-// pushing the result back via QueueUpdateDraw. The query is cancellable with Esc.
-// (History recording arrives in T-3.)
+// pushing the result back via QueueUpdateDraw. The query is cancellable with Esc
+// and recorded in history (best-effort).
 func (a *App) runQuery(sql string) {
 	if a.conn == nil {
 		a.setError("not connected")
@@ -287,10 +295,13 @@ func (a *App) runQuery(sql string) {
 			a.cancel = nil
 			cancel()
 			if err != nil {
-				a.setError(classifyErr(err).Error())
+				cerr := classifyErr(err)
+				a.recordHistory(sql, elapsed, 0, cerr)
+				a.setError(cerr.Error())
 				return
 			}
 			a.fillResults(res.cols, res.data)
+			a.recordHistory(sql, elapsed, len(res.data), nil)
 			a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
 		})
 	}()
@@ -317,6 +328,78 @@ func classifyErr(err error) error {
 	default:
 		return err
 	}
+}
+
+// recordHistory best-effort records an executed query (no-op if history is
+// disabled). Failures are ignored so they never disrupt the UI.
+func (a *App) recordHistory(sql string, dur time.Duration, rows int, qerr error) {
+	if a.hist == nil {
+		return
+	}
+	e := history.HistoryEntry{
+		ConnectionID: a.connID,
+		SQL:          sql,
+		ExecutedAt:   time.Now(),
+		Duration:     dur,
+		RowsAffected: int64(rows),
+		Success:      qerr == nil,
+	}
+	if qerr != nil {
+		e.ErrorMessage = qerr.Error()
+	}
+	_, _ = a.hist.AddHistory(context.Background(), e)
+}
+
+// showHistory opens an overlay listing recent queries; Enter loads one into the
+// editor. Ctrl-R / Esc close it.
+func (a *App) showHistory() {
+	if a.hist == nil {
+		a.SetStatus("history unavailable   " + defaultStatus)
+		return
+	}
+	entries, err := a.hist.ListHistory(context.Background(), 100)
+	if err != nil {
+		a.setError("history: " + err.Error())
+		return
+	}
+
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true).SetTitle(" History — Enter: load · Esc: close ")
+	if len(entries) == 0 {
+		list.AddItem("(no history yet)", "", 0, nil)
+	}
+	for _, e := range entries {
+		status := "ok "
+		if !e.Success {
+			status = "ERR"
+		}
+		label := fmt.Sprintf("%s  %s  %s", e.ExecutedAt.Local().Format("01-02 15:04:05"), status, oneLine(e.SQL))
+		sql := e.SQL
+		list.AddItem(label, "", 0, func() { a.useHistorySQL(sql) })
+	}
+
+	a.pages.AddPage("history", centered(list, 90, 22), true, true)
+	a.app.SetFocus(list)
+	a.historyOpen = true
+}
+
+func (a *App) hideHistory() {
+	a.pages.RemovePage("history")
+	a.historyOpen = false
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
+// useHistorySQL loads a history entry's SQL into the editor (does not auto-run,
+// so the user can review then F5).
+func (a *App) useHistorySQL(sql string) {
+	a.hideHistory()
+	a.editor.SetText(sql, true)
+	a.focusPanel(3)
+}
+
+// oneLine collapses whitespace runs to single spaces for compact list display.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // fillResults renders columns + rows into the Results table (header fixed).
@@ -422,6 +505,16 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
+	// While the history overlay is open, Esc / Ctrl-R close it; other keys
+	// (arrows, Enter) go to the list.
+	if a.historyOpen {
+		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlR {
+			a.hideHistory()
+			return nil
+		}
+		return ev
+	}
+
 	// Esc cancels a running query; when idle it passes through (e.g. to widgets).
 	if ev.Key() == tcell.KeyEscape {
 		if a.running {
@@ -441,6 +534,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyF5:
 		a.runEditor()
+		return nil
+	case tcell.KeyCtrlR:
+		a.showHistory()
 		return nil
 	case tcell.KeyTab:
 		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
@@ -483,7 +579,7 @@ func (a *App) runEditor() {
 	a.runQuery(sql)
 }
 
-const defaultStatus = "[::b]Tab[::-] panel  [::b]Enter[::-] open  [::b]F5[::-] run  [::b]?[::-] help  [::b]q[::-] quit"
+const defaultStatus = "[::b]Tab[::-] panel  [::b]F5[::-] run  [::b]^R[::-] history  [::b]?[::-] help  [::b]q[::-] quit"
 
 // SetStatus updates the bottom status/help bar (supports tview color tags).
 func (a *App) SetStatus(s string) { a.status.SetText(" " + s) }

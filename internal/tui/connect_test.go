@@ -7,12 +7,23 @@ import (
 	"testing"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
 
 	"github.com/gdamore/tcell/v2"
 )
+
+func tempHistory(t *testing.T) *history.Store {
+	t.Helper()
+	h, err := history.Open(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	return h
+}
 
 func sqliteCfg(id, path string) *config.Config {
 	return &config.Config{Connections: []config.ConnectionConfig{
@@ -191,6 +202,64 @@ func TestEscPassesThroughWhenIdle(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
 	if ev := a.onKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); ev == nil {
 		t.Fatal("Esc should pass through when no query is running")
+	}
+}
+
+func TestRecordHistory(t *testing.T) {
+	h := tempHistory(t)
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory(), History: h})
+	a.connID = "demo"
+
+	a.recordHistory("select 1", 5_000_000, 1, nil)
+	a.recordHistory("select bad", 0, 0, errors.New("boom"))
+
+	entries, err := h.ListHistory(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("history entries = %d, want 2", len(entries))
+	}
+	// newest first: the failing one
+	if entries[0].Success || entries[0].ErrorMessage != "boom" {
+		t.Errorf("expected failing entry first, got %+v", entries[0])
+	}
+}
+
+func TestRecordHistoryDisabledIsNoop(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()}) // no History
+	a.recordHistory("select 1", 0, 1, nil)                                          // must not panic
+}
+
+func TestShowHistoryAndUseSQL(t *testing.T) {
+	h := tempHistory(t)
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory(), History: h})
+	a.connID = "demo"
+	a.recordHistory("select 42 as answer", 0, 1, nil)
+
+	a.showHistory()
+	if !a.historyOpen || !a.pages.HasPage("history") {
+		t.Fatal("Ctrl-R should open the history overlay")
+	}
+
+	// Loading an entry fills the editor and closes the overlay.
+	a.useHistorySQL("select 42 as answer")
+	if a.historyOpen || a.pages.HasPage("history") {
+		t.Fatal("loading a history entry should close the overlay")
+	}
+	if got := a.editor.GetText(); got != "select 42 as answer" {
+		t.Errorf("editor text = %q, want the loaded SQL", got)
+	}
+	if a.focusIdx != 3 {
+		t.Errorf("focus should move to the SQL editor (3), got %d", a.focusIdx)
+	}
+}
+
+func TestShowHistoryDisabled(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()}) // no History
+	a.showHistory()
+	if a.historyOpen {
+		t.Fatal("history overlay must not open when history is disabled")
 	}
 }
 

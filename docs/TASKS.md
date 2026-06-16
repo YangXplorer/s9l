@@ -255,7 +255,10 @@
   - 依赖：T-2a · 预估：0.75d · 注：动态 spinner 动画留 T-4 打磨（当前静态运行态提示）；查询历史记录随 T-3
 
 ### T-3 历史 / 收藏面板
-- [ ] **T-3a 历史面板**（`Ctrl-R`：列 `history.ListHistory`，`Enter` 回填编辑器/执行）· 依赖 T-2a · 预估：0.75d
+- [x] **T-3a 历史面板**
+  - 产出：`Ctrl-R` 打开历史浮层（`history.ListHistory` 最近 100 条，时间/ok·ERR/SQL 单行）；`Enter` 回填编辑器(不自动执行, 用户审阅后 F5)+聚焦编辑器+关浮层；`Esc`/`Ctrl-R` 关闭；TUI 执行查询亦经 `recordHistory` 写入(含失败/耗时/行数)；history 经 `Options.History` 注入(cmd 开默认库, New 不做 I/O, 缺失则降级禁用)
+  - DoD：Ctrl-R 列历史、Enter 回填编辑器（白盒 `TestShowHistoryAndUseSQL`）✅；执行写历史（`TestRecordHistory` 成功+失败）✅；history 禁用时 Ctrl-R/记录 无操作不崩（`TestShowHistoryDisabled`/`...DisabledIsNoop`）✅；真实 pty Ctrl-R→Esc→q exit 0
+  - 依赖：T-2a · 预估：0.75d · 注：database_name 暂空；自动执行选项后续
 - [ ] **T-3b 收藏面板**（列/搜索 `saved`，`Enter` 运行，`s` 保存当前查询）· 依赖 T-2a · 预估：0.75d
 
 ### T-4 打磨 + 测试 + 文档
