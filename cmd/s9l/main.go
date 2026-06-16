@@ -54,6 +54,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "saved" {
 		return runSaved(args[1:], out, errOut)
 	}
+	if len(args) > 0 && args[0] == "tui" {
+		return runTUI(args[1:])
+	}
 
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -72,8 +75,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	fs.DurationVar(&timeout, "timeout", 0, "abort a query after this duration (e.g. 30s; 0 = no limit)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
-		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"`)
-		_, _ = fmt.Fprintln(errOut, `       s9l conn <list|add|rm>`)
+		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"   (omit -e for REPL)`)
+		_, _ = fmt.Fprintln(errOut, `       s9l tui [connection]              (full-screen UI)`)
+		_, _ = fmt.Fprintln(errOut, `       s9l conn|history|saved ...`)
 		fs.PrintDefaults()
 	}
 	positionals, err := parseFlagsInterspersed(fs, args)
