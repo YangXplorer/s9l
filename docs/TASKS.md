@@ -220,9 +220,9 @@
 原则：**只新增 `internal/tui/` 展示层，不改核心**；逻辑与 tview 渲染解耦以便单测。
 
 ### T-0 脚手架（先做）
-- [ ] **T-0 TUI 骨架 + `s9l tui` 子命令**
-  - 产出：加 `rivo/tview` 依赖；`internal/tui/` 包；`s9l tui [conn]` 子命令；最小 `App`（启动全屏、`q`/`Ctrl-C` 退出、空 Flex 布局）
-  - DoD：`s9l tui` 能进全屏并干净退出；`go build`/`-short` 不受影响；TUI 逻辑可注入测试（SimulationScreen 启停冒烟）
+- [x] **T-0 TUI 骨架 + `s9l tui` 子命令**
+  - 产出：`rivo/tview`+`gdamore/tcell/v2` 依赖；`internal/tui/tui.go`（`App`：Flex 占位 body + 状态栏、`q`/`Ctrl-C` 退出、测试接缝 SetScreen/OnReady/SendKey）；`cmd/s9l/tui.go` `runTUI` + `s9l tui [conn]` 子命令 + usage
+  - DoD：SimulationScreen 测试启动→送 `q`→干净退出 ✅；真实 pty 冒烟 exit 0 ✅；`go build`/`-short`/lint 不受影响 ✅
   - 依赖：现有 cmd 结构 · 预估：0.5d
 
 ### T-1 MVP 垂直切片（连接→树→查询→结果）
