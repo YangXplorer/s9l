@@ -98,12 +98,17 @@ func Get(name string) (Driver, error) {
 }
 
 // Open looks up the named driver and opens a connection with the given DSN.
+// Connection failures are wrapped with the driver name for context.
 func Open(ctx context.Context, name, dsn string) (Conn, error) {
 	d, err := Get(name)
 	if err != nil {
 		return nil, err
 	}
-	return d.Open(ctx, dsn)
+	conn, err := d.Open(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect (%s): %w", name, err)
+	}
+	return conn, nil
 }
 
 // Names returns the sorted list of registered driver names.

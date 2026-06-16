@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // noInput is an empty stdin for tests that do not exercise the REPL.
@@ -109,6 +112,30 @@ func TestRunMaxColWidth(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "abcd…") {
 		t.Fatalf("expected truncated cell, got:\n%s", out.String())
+	}
+}
+
+func TestClassifyErr(t *testing.T) {
+	if classifyErr(nil, 0) != nil {
+		t.Error("nil should stay nil")
+	}
+	if got := classifyErr(context.Canceled, 0); got == nil || got.Error() != "query cancelled" {
+		t.Errorf("canceled = %v, want 'query cancelled'", got)
+	}
+	if got := classifyErr(context.DeadlineExceeded, 5*time.Second); got == nil || !strings.Contains(got.Error(), "timed out after 5s") {
+		t.Errorf("deadline = %v, want contains 'timed out after 5s'", got)
+	}
+	sentinel := errors.New("boom")
+	if got := classifyErr(sentinel, 0); got != sentinel {
+		t.Errorf("other error should pass through unchanged, got %v", got)
+	}
+}
+
+func TestRunTimeout(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	err := run([]string{":memory:", "-e", "select 1", "--timeout", "1ns"}, noInput(), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error, got %v", err)
 	}
 }
 

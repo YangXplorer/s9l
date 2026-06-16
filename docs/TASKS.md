@@ -97,9 +97,9 @@
   - DoD：csv/tsv/json 大结果不全量进内存（实测 5w 行流式导出）✅；`--max-col-width` 输出可控 ✅
   - 依赖：P1-B1 · 预估：0.5d · 注：render 单一实现(WriteSource)，Write 退化为 slice 适配
 
-- [ ] **P1-B3 错误与上下文处理**
-  - 产出：统一错误包装（区分连接错误/SQL 错误/超时）；支持 `Ctrl-C` 取消正在执行的查询（context cancel）
-  - DoD：长查询可中断；错误信息含 driver 上下文
+- [x] **P1-B3 错误与上下文处理**
+  - 产出：`cmd/s9l/exec.go` `queryContext`(signal.NotifyContext SIGINT + 可选 `--timeout`) + `classifyErr`(Canceled→"query cancelled"、DeadlineExceeded→"query timed out after X")；`driver.Open` 连接错误包装 driver 名(`connect (postgres): ...`)；`-e` 与 REPL 每条查询独立可取消(REPL 取消查询不退出会话)
+  - DoD：长查询 Ctrl-C 可中断（实测 `query cancelled`）✅；`--timeout` 可中断（实测 `query timed out after 500ms`）✅；错误含 driver 上下文 ✅
   - 依赖：P1-B1 · 预估：0.5d
 
 ### C. 交互与输出

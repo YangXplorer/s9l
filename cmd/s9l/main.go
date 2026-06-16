@@ -61,12 +61,14 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		driverName  string
 		formatFlag  string
 		maxColWidth int
+		timeout     time.Duration
 		showVer     bool
 	)
 	fs.StringVar(&execSQL, "e", "", `execute SQL and exit`)
 	fs.StringVar(&driverName, "driver", "sqlite", "driver name for a bare DSN ("+fmt.Sprint(driver.Names())+")")
 	fs.StringVar(&formatFlag, "format", "", "output format: table|json|csv|tsv (default: table on a TTY, tsv when piped)")
 	fs.IntVar(&maxColWidth, "max-col-width", 0, "truncate table cells to N runes (0 = unlimited; table format only)")
+	fs.DurationVar(&timeout, "timeout", 0, "abort a query after this duration (e.g. 30s; 0 = no limit)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintln(errOut, `usage: s9l <connection-id|dsn> -e "SQL"`)
@@ -97,14 +99,14 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	ctx := context.Background()
 	if execSQL == "" {
 		// No -e: drop into the interactive REPL.
-		return runREPL(ctx, in, out, errOut, positionals[0], driverName, opts)
+		return runREPL(ctx, in, out, errOut, positionals[0], driverName, opts, timeout)
 	}
-	return runQuery(ctx, out, errOut, positionals[0], driverName, execSQL, opts)
+	return runQuery(ctx, out, errOut, positionals[0], driverName, execSQL, opts, timeout)
 }
 
 // runQuery resolves target to a connection, runs sql, renders the result, and
 // records history (best-effort). It is shared by the `-e` path and `saved run`.
-func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, opts render.Options) error {
+func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, opts render.Options, timeout time.Duration) error {
 	drv, dsn, err := resolveTarget(target, driverFlag)
 	if err != nil {
 		return err
@@ -116,8 +118,12 @@ func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sq
 	}
 	defer func() { _ = conn.Close() }()
 
+	qctx, cancel := queryContext(ctx, timeout)
+	defer cancel()
+
 	start := time.Now()
-	rowCount, qerr := runStatement(ctx, out, conn, sql, opts)
+	rowCount, qerr := runStatement(qctx, out, conn, sql, opts)
+	qerr = classifyErr(qerr, timeout)
 	// History recording is best-effort and must not affect the query result.
 	recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 	return qerr
