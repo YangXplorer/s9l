@@ -35,6 +35,8 @@ func (c ConnectionConfig) DSN(password string) (string, error) {
 		return c.Database, nil
 	case "postgres":
 		return c.postgresDSN(password), nil
+	case "mysql":
+		return c.mysqlDSN(password), nil
 	case "":
 		return "", fmt.Errorf("connection %q: missing driver", c.ID)
 	default:
@@ -72,4 +74,35 @@ func (c ConnectionConfig) postgresDSN(password string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// mysqlDSN builds a go-sql-driver/mysql DSN:
+//
+//	user:password@tcp(host:port)/database?parseTime=true[&tls=true][&charset=...]
+//
+// parseTime makes DATE/DATETIME scan into time.Time. Note: passwords containing
+// '@' or '/' are not escaped here — use an env/keychain ref without those, or a
+// raw DSN, for such passwords.
+func (c ConnectionConfig) mysqlDSN(password string) string {
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	port := c.Port
+	if port == 0 {
+		port = 3306
+	}
+	auth := c.User
+	if password != "" {
+		auth = c.User + ":" + password
+	}
+	q := url.Values{}
+	q.Set("parseTime", "true")
+	if c.Charset != "" {
+		q.Set("charset", c.Charset)
+	}
+	if c.SSL {
+		q.Set("tls", "true")
+	}
+	return fmt.Sprintf("%s@tcp(%s:%d)/%s?%s", auth, host, port, c.Database, q.Encode())
 }

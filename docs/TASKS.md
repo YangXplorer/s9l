@@ -196,7 +196,7 @@
 
 预估合计：~5–6 人日
 
-- [ ] **P2-1 MySQL 适配器**（`go-sql-driver/mysql`）— DoD：仅新增 driver 文件即可，不改核心；元数据命令适配 · 预估：1d
+- [x] **P2-1 MySQL 适配器**（`go-sql-driver/mysql`，纯 Go）— DoD：仅新增 `internal/driver/mysql/` + config mysql DSN 分支 + 注册，核心零改动 ✅；Metadata 用 information_schema（`?` 占位）✅；testcontainers(mysql:8.4) conformance+metadata 全 PASS ✅ · 预估：1d
 - [ ] **P2-2 自动补全**（REPL 内表名/列名补全，基于 Metadata 缓存）· 预估：2d
 - [ ] **P2-3 结果分页/翻页**（大结果交互式翻页或 pager 集成）· 预估：1d
 - [ ] **P2-4 错误信息与帮助打磨**（`s9l --help`/`\?`）· 预估：0.5d

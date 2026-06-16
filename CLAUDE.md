@@ -26,7 +26,7 @@ s9l 是一个**终端数据库客户端**（快速连接数据库并进行数据
 - **历史/收藏**：SQLite `~/.config/s9l/history.db`（表 `query_history` / `saved_queries`，可选 `query_folders`）。
 - **可拓展性**：编译期 `Driver` 接口抽象 + 注册机制。**新增数据库只新增一个 driver 文件，不改核心层**。运行期插件进 Backlog。
 - **查询效率**：流式读取 rows（逐行消费，不全量进内存）、连接复用、大结果分页/截断。
-- **首批数据库**：SQLite + PostgreSQL 已支持（纯 Go 驱动 `modernc.org/sqlite`、`jackc/pgx/v5/stdlib`）→ MySQL（Phase 2）。
+- **已支持数据库**：SQLite、PostgreSQL、MySQL（纯 Go 驱动 `modernc.org/sqlite`、`jackc/pgx/v5/stdlib`、`go-sql-driver/mysql`，均免 CGO）。
 
 ## 架构（目标）
 

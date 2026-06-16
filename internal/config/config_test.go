@@ -98,7 +98,17 @@ func TestDSN(t *testing.T) {
 		t.Fatalf("postgres DSN = %q, want %q", got, want)
 	}
 
-	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mysql"}).DSN(""); err == nil {
+	// mysql builds a go-sql-driver DSN.
+	my := config.ConnectionConfig{ID: "x", Driver: "mysql", Host: "db", Port: 3306, User: "dev", Database: "app"}
+	myDSN, err := my.DSN("pw")
+	if err != nil {
+		t.Fatalf("mysql DSN: %v", err)
+	}
+	if myDSN != "dev:pw@tcp(db:3306)/app?parseTime=true" {
+		t.Fatalf("mysql DSN = %q", myDSN)
+	}
+
+	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mongodb"}).DSN(""); err == nil {
 		t.Fatal("unimplemented driver should error")
 	}
 }
