@@ -41,7 +41,8 @@ type Options struct {
 
 // App is the s9l TUI application.
 type App struct {
-	app *tview.Application
+	app   *tview.Application
+	pages *tview.Pages
 
 	cfg   *config.Config
 	store secret.SecretStore
@@ -51,6 +52,9 @@ type App struct {
 	results  *tview.Table
 	editor   *tview.TextView
 	status   *tview.TextView
+
+	focusIdx int
+	helpOpen bool
 
 	conn       driver.Conn
 	connID     string
@@ -121,8 +125,67 @@ func (a *App) buildLayout() {
 		AddItem(body, 0, 1, true).
 		AddItem(a.status, 1, 0, false)
 
-	a.app.SetRoot(root, true).EnableMouse(true)
+	a.pages = tview.NewPages().AddPage("main", root, true, true)
+	a.app.SetRoot(a.pages, true).EnableMouse(true)
+	a.focusPanel(0)
 }
+
+// navPanels are the focusable panels cycled by Tab / 1-3.
+func (a *App) navPanels() []tview.Primitive {
+	return []tview.Primitive{a.connList, a.schema, a.results}
+}
+
+// focusPanel moves focus to panel i and highlights its border.
+func (a *App) focusPanel(i int) {
+	a.focusIdx = i
+	a.app.SetFocus(a.navPanels()[i])
+	a.connList.SetBorderColor(borderColor(i == 0))
+	a.schema.SetBorderColor(borderColor(i == 1))
+	a.results.SetBorderColor(borderColor(i == 2))
+}
+
+func borderColor(focused bool) tcell.Color {
+	if focused {
+		return tcell.ColorYellow
+	}
+	return tcell.ColorWhite
+}
+
+func (a *App) showHelp() {
+	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
+	help.SetBorder(true).SetTitle(" Help ")
+	a.pages.AddPage("help", centered(help, 46, 12), true, true)
+	a.helpOpen = true
+}
+
+func (a *App) hideHelp() {
+	a.pages.RemovePage("help")
+	a.helpOpen = false
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
+// centered wraps p in spacers so it floats centered at the given size.
+func centered(p tview.Primitive, width, height int) tview.Primitive {
+	col := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(p, height, 0, true).
+		AddItem(nil, 0, 1, false)
+	return tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(col, width, 0, true).
+		AddItem(nil, 0, 1, false)
+}
+
+const helpText = `[::b]s9l TUI[::-]
+
+  Tab / Shift-Tab   switch panel
+  1 / 2 / 3         Connections / Schema / Results
+  Enter             connect / preview table
+  Up / Down         navigate within a panel
+  ?                 toggle this help
+  q / Ctrl-C        quit
+
+  [::d]press any key to close[::-]`
 
 // populateConnections fills the list from config; Enter connects.
 func (a *App) populateConnections() {
@@ -304,14 +367,45 @@ func collectFirstColumn(rows driver.Rows) ([]string, error) {
 }
 
 func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
-	if ev.Key() == tcell.KeyCtrlC || (ev.Key() == tcell.KeyRune && ev.Rune() == 'q') {
+	// While help is open, any key dismisses it.
+	if a.helpOpen {
+		a.hideHelp()
+		return nil
+	}
+
+	switch {
+	case ev.Key() == tcell.KeyCtrlC:
 		a.app.Stop()
 		return nil
+	case ev.Key() == tcell.KeyTab:
+		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
+		return nil
+	case ev.Key() == tcell.KeyBacktab:
+		a.focusPanel((a.focusIdx + len(a.navPanels()) - 1) % len(a.navPanels()))
+		return nil
+	case ev.Key() == tcell.KeyRune:
+		switch ev.Rune() {
+		case 'q':
+			a.app.Stop()
+			return nil
+		case '?':
+			a.showHelp()
+			return nil
+		case '1':
+			a.focusPanel(0)
+			return nil
+		case '2':
+			a.focusPanel(1)
+			return nil
+		case '3':
+			a.focusPanel(2)
+			return nil
+		}
 	}
 	return ev
 }
 
-const defaultStatus = "[::b]?[::-] help   [::b]q[::-] quit"
+const defaultStatus = "[::b]Tab[::-] panel  [::b]Enter[::-] open  [::b]?[::-] help  [::b]q[::-] quit"
 
 // SetStatus updates the bottom status/help bar (supports tview color tags).
 func (a *App) SetStatus(s string) { a.status.SetText(" " + s) }

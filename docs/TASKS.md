@@ -238,11 +238,11 @@
   - 产出：schema 树 `Enter` 表节点 → `runTableQuery` → `SELECT * FROM <quoteIdent> LIMIT 200` → `runQuery` 填 `tview.Table`（表头固定+加粗、NULL→"NULL"、行可选可滚动）；status 显示行数/耗时；`quoteIdent` 按方言转义(mysql 反引号/其余双引号)；`drainRows`/`cellString` 辅助
   - DoD：选表即见结果（白盒 `TestRunTableQueryFillsResults`：表头+2行+NULL 正确）✅；空结果/NULL 正常 ✅；错误进 status 不崩溃
   - 依赖：T-1b · 预估：1d · 注：当前同步执行（可取消 context 是 T-2b）；查询历史记录随 T-3
-- [ ] **T-1d 面板切换 + 帮助 + 退出**
-  - 产出：`Tab`/`1-3` 切面板、面板内导航、`?` 帮助浮层、`q` 退出
-  - DoD：键盘可在三面板间流畅操作；`?` 列出键位
+- [x] **T-1d 面板切换 + 帮助 + 退出**
+  - 产出：`tview.Pages`(main+help)；`onKey`：`Tab`/`Shift-Tab` 循环、`1/2/3` 直达 Connections/Schema/Results、聚焦面板黄色高亮、`?` 帮助浮层(居中, 任意键关闭)、`q`/`Ctrl-C` 退出；面板内导航由 tview 控件(方向键)处理；状态栏更新提示
+  - DoD：键盘在三面板间切换并高亮 ✅；`?` 列出键位、任意键关闭 ✅；`q` 退出 ✅（白盒 focus/help/Tab 测试 + 真实 pty `q`/`?→x→q` 均 exit 0）
   - 依赖：T-1c · 预估：0.5d
-- **T-1 验收（MVP）**：`s9l tui pg` → 看到连接/schema 树 → 选表出结果表格 → 键盘浏览 → `q` 退出，全程不崩。
+- **T-1 验收（MVP）✅**：`s9l tui <conn>` → 连接列表/schema 树 → 选表出结果表格 → 键盘切换面板/浏览 → `?` 帮助 → `q` 退出，全程不崩（SQLite 实测；PG/MySQL 同路径）。
 
 ### T-2 SQL 编辑器 + 异步执行
 - [ ] **T-2a SQL 编辑器面板**（多行 `TextArea`，`R`/`Ctrl-Enter` 运行 → 结果区；错误进 status）· 依赖 T-1c · 预估：1d
