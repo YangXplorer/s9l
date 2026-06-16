@@ -92,7 +92,8 @@ Manage connections with `s9l conn add|list|rm`.
 
 In the REPL / with `-e`: `\l`, `\dt`, `\d [table]`, `\?`, and `\q` (REPL quit).
 
-Output format: `--format table|json|csv|tsv`.
+Flags: `--format table|json|csv|tsv`, `--max-col-width N` (truncate table cells),
+`--timeout 30s` (abort a slow query). Press `Ctrl-C` to cancel a running query.
 
 ## Development
 
