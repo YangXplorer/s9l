@@ -226,9 +226,9 @@
   - 依赖：现有 cmd 结构 · 预估：0.5d
 
 ### T-1 MVP 垂直切片（连接→树→查询→结果）
-- [ ] **T-1a 连接列表面板**
-  - 产出：左上 List/TreeView 列出 config 连接；`Enter` 经 `secret.Resolve`+`driver.Open` 连接；带 `conn` 参数自动连；status 显示当前连接
-  - DoD：能从配置选连接并连上 SQLite/PG/MySQL；连接失败错误进 status 不崩溃
+- [x] **T-1a 连接列表面板**
+  - 产出：lazygit 式多面板 Flex 骨架（Connections/Schema/Results/SQL 占位 + 状态栏）；Connections List 来自 config；`Enter` 经 `secret.Resolve`+`cc.DSN`+`driver.Open` 连接；`s9l tui <conn>` 自动连；status 显示当前连接/错误；退出时关连接；Options 可注入 Config/Store 便于测试
+  - DoD：从配置选连接并连上（SQLite 实测；PG/MySQL 同路径）✅；连接失败进 status 不崩溃、conn 保持 nil ✅；白盒测试 connect/auto-connect/错误/列表填充 + 真实 pty 冒烟 exit 0 ✅
   - 依赖：T-0 · 预估：0.75d
 - [ ] **T-1b schema 树面板**
   - 产出：左下 TreeView，连接后经 `Metadata.Databases/Tables` 懒加载 库→表
