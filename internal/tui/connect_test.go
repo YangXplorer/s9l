@@ -9,6 +9,8 @@ import (
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 func sqliteCfg(id, path string) *config.Config {
@@ -140,5 +142,50 @@ func TestQuoteIdent(t *testing.T) {
 	}
 	if got := quoteIdent("postgres", `ta"ble`); got != `"ta""ble"` {
 		t.Errorf("postgres quote = %q", got)
+	}
+}
+
+func TestFocusPanelCycle(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	if a.focusIdx != 0 {
+		t.Fatalf("initial focusIdx = %d, want 0 (connections)", a.focusIdx)
+	}
+	a.focusPanel(1)
+	if a.focusIdx != 1 || a.app.GetFocus() != a.schema {
+		t.Fatal("focusPanel(1) should focus the schema tree")
+	}
+	a.focusPanel(2)
+	if a.app.GetFocus() != a.results {
+		t.Fatal("focusPanel(2) should focus the results table")
+	}
+}
+
+func TestHelpToggle(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	if a.helpOpen || a.pages.HasPage("help") {
+		t.Fatal("help should start closed")
+	}
+	// '?' opens help; any key closes it.
+	a.onKey(tcell.NewEventKey(tcell.KeyRune, '?', tcell.ModNone))
+	if !a.helpOpen || !a.pages.HasPage("help") {
+		t.Fatal("'?' should open the help overlay")
+	}
+	if ev := a.onKey(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone)); ev != nil {
+		t.Error("key should be consumed while dismissing help")
+	}
+	if a.helpOpen || a.pages.HasPage("help") {
+		t.Fatal("any key should dismiss the help overlay")
+	}
+}
+
+func TestTabCyclesFocus(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.onKey(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone))
+	if a.focusIdx != 1 {
+		t.Fatalf("Tab should advance focus to 1, got %d", a.focusIdx)
+	}
+	a.onKey(tcell.NewEventKey(tcell.KeyBacktab, 0, tcell.ModNone))
+	if a.focusIdx != 0 {
+		t.Fatalf("Shift-Tab should return focus to 0, got %d", a.focusIdx)
 	}
 }
