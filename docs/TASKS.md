@@ -245,7 +245,10 @@
 - **T-1 验收（MVP）✅**：`s9l tui <conn>` → 连接列表/schema 树 → 选表出结果表格 → 键盘切换面板/浏览 → `?` 帮助 → `q` 退出，全程不崩（SQLite 实测；PG/MySQL 同路径）。
 
 ### T-2 SQL 编辑器 + 异步执行
-- [ ] **T-2a SQL 编辑器面板**（多行 `TextArea`，`R`/`Ctrl-Enter` 运行 → 结果区；错误进 status）· 依赖 T-1c · 预估：1d
+- [x] **T-2a SQL 编辑器面板**
+  - 产出：`a.editor` 改为 `tview.TextArea`(多行可编辑, placeholder)；加入 navPanels(面板 4, `Tab`/`4` 可达)；**`F5` 运行**编辑器 SQL → `runQuery`(复用 T-1c)→ 结果/错误进 status；`onKey` 作用域化：编辑器聚焦时 `q`/`1-4`/`?` 等作为文本输入透传，仅 `F5`/`Tab`/`Ctrl-C` 全局生效；帮助/状态栏更新(F5 run、1/2/3/4)
+  - DoD：编辑器输入 SQL、`F5` 运行见结果（白盒 `TestRunEditorExecutes`）✅；编辑时 `q`/`1`/`?` 不误触发快捷键（白盒 `TestEditorTypingPassesThrough`）✅；空输入提示；真实 pty 输入+`Ctrl-C` exit 0
+  - 依赖：T-1c · 预估：1d · 注：运行键用 `F5`(DB 工具习惯, 终端可靠; `Ctrl-Enter` 不可靠);多语句拆分后续
 - [ ] **T-2b 异步执行 + 取消 + 加载态**（查询在 goroutine，`QueueUpdateDraw` 回推；`Esc` 取消；spinner/状态）· 依赖 T-2a · 预估：0.75d
 
 ### T-3 历史 / 收藏面板
