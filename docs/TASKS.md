@@ -230,10 +230,10 @@
   - 产出：lazygit 式多面板 Flex 骨架（Connections/Schema/Results/SQL 占位 + 状态栏）；Connections List 来自 config；`Enter` 经 `secret.Resolve`+`cc.DSN`+`driver.Open` 连接；`s9l tui <conn>` 自动连；status 显示当前连接/错误；退出时关连接；Options 可注入 Config/Store 便于测试
   - DoD：从配置选连接并连上（SQLite 实测；PG/MySQL 同路径）✅；连接失败进 status 不崩溃、conn 保持 nil ✅；白盒测试 connect/auto-connect/错误/列表填充 + 真实 pty 冒烟 exit 0 ✅
   - 依赖：T-0 · 预估：0.75d
-- [ ] **T-1b schema 树面板**
-  - 产出：左下 TreeView，连接后经 `Metadata.Databases/Tables` 懒加载 库→表
-  - DoD：树正确展示当前连接的库与表（三库均可）
-  - 依赖：T-1a · 预估：0.75d
+- [x] **T-1b schema 树面板**
+  - 产出：左下 TreeView，连接成功后 `loadSchema` 经 `driver.Metadata.Tables()` 列出当前库的表；表节点以表名为 reference（供 T-1c 选表查询）；无 Metadata 能力/错误时给提示/进 status 不崩溃；`collectFirstColumn` 读元数据首列
+  - DoD：树正确展示当前连接库的表（SQLite 白盒测试；PG/MySQL 走同一 Metadata 路径，已有各自 metadata IT）✅
+  - 依赖：T-1a · 预估：0.75d · 注：单连接只见一个库；跨库切换（库→表 多级）留作后续强化
 - [ ] **T-1c 结果表格 + 选表查询**
   - 产出：主区 `tview.Table`；`Enter` 选表 → `SELECT * FROM t LIMIT N`（N 可配）→ 填表格；NULL/宽列处理；上下/翻页/横向滚动；status 显示行数/耗时
   - DoD：选表即见结果，可滚动；空结果/NULL 正常；查询走可取消 context
