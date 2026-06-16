@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -101,7 +102,9 @@ func TestLoadSchemaShowsTables(t *testing.T) {
 	}
 }
 
-func TestRunTableQueryFillsResults(t *testing.T) {
+// fetch + fillResults are the synchronous core of query execution (runQuery
+// wraps them in a goroutine); test them directly without the event loop.
+func TestFetchAndFillResults(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "t.db")
 	cfg := sqliteCfg("demo", db)
 	a := New(Options{Config: cfg, Store: secret.NewMemory()})
@@ -119,10 +122,13 @@ func TestRunTableQueryFillsResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a.runTableQuery("t")
+	res, err := fetch(ctx, a.conn, "select id, name from t order by id")
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	a.fillResults(res.cols, res.data)
 
-	// Header row + 2 data rows.
-	if got := a.results.GetRowCount(); got != 3 {
+	if got := a.results.GetRowCount(); got != 3 { // header + 2 rows
 		t.Fatalf("results row count = %d, want 3", got)
 	}
 	if h := a.results.GetCell(0, 0).Text; h != "id" {
@@ -133,6 +139,58 @@ func TestRunTableQueryFillsResults(t *testing.T) {
 	}
 	if v := a.results.GetCell(2, 1).Text; v != "NULL" {
 		t.Errorf("NULL cell(2,1) = %q, want NULL", v)
+	}
+}
+
+func TestFetchCancelled(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "t.db")
+	cfg := sqliteCfg("demo", db)
+	a := New(Options{Config: cfg, Store: secret.NewMemory()})
+	defer a.closeConn()
+	cc, _ := cfg.Get("demo")
+	if err := a.connect(cc); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled
+	if _, err := fetch(ctx, a.conn, "select 1"); err == nil {
+		t.Fatal("fetch with cancelled context should error")
+	}
+}
+
+func TestClassifyErr(t *testing.T) {
+	if got := classifyErr(context.Canceled); got == nil || got.Error() != "query cancelled" {
+		t.Errorf("canceled → %v, want 'query cancelled'", got)
+	}
+	if got := classifyErr(context.DeadlineExceeded); got == nil || got.Error() != "query timed out" {
+		t.Errorf("deadline → %v, want 'query timed out'", got)
+	}
+	plain := errors.New("boom")
+	if got := classifyErr(plain); got != plain {
+		t.Errorf("other error should pass through unchanged, got %v", got)
+	}
+}
+
+func TestEscCancelsRunningQuery(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	cancelled := false
+	a.running = true
+	a.cancel = func() { cancelled = true }
+
+	ev := a.onKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone))
+	if !cancelled {
+		t.Fatal("Esc should cancel a running query")
+	}
+	if ev != nil {
+		t.Error("Esc should be consumed while a query is running")
+	}
+}
+
+func TestEscPassesThroughWhenIdle(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	if ev := a.onKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); ev == nil {
+		t.Fatal("Esc should pass through when no query is running")
 	}
 }
 
@@ -178,26 +236,13 @@ func TestHelpToggle(t *testing.T) {
 	}
 }
 
-func TestRunEditorExecutes(t *testing.T) {
-	db := filepath.Join(t.TempDir(), "t.db")
-	cfg := sqliteCfg("demo", db)
-	a := New(Options{Config: cfg, Store: secret.NewMemory()})
-	defer a.closeConn()
-
-	cc, _ := cfg.Get("demo")
-	if err := a.connect(cc); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	a.editor.SetText("select 7 as n", false)
-
-	// F5 runs the editor's SQL.
-	a.onKey(tcell.NewEventKey(tcell.KeyF5, 0, tcell.ModNone))
-
-	if got := a.results.GetRowCount(); got != 2 { // header + 1 row
-		t.Fatalf("results rows = %d, want 2", got)
-	}
-	if v := a.results.GetCell(1, 0).Text; v != "7" {
-		t.Errorf("cell(1,0) = %q, want 7", v)
+func TestRunEditorEmptyHint(t *testing.T) {
+	// Empty editor must not start a query (no goroutine), just hint in status.
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.editor.SetText("   \n  ", false)
+	a.runEditor()
+	if a.running {
+		t.Fatal("empty editor must not start a query")
 	}
 }
 

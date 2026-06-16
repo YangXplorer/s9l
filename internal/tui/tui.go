@@ -9,6 +9,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -55,6 +56,9 @@ type App struct {
 
 	focusIdx int
 	helpOpen bool
+
+	running bool               // a query is executing
+	cancel  context.CancelFunc // cancels the running query (Esc)
 
 	conn       driver.Conn
 	connID     string
@@ -249,27 +253,70 @@ func (a *App) runTableQuery(table string) {
 	a.runQuery(fmt.Sprintf("SELECT * FROM %s LIMIT %d", quoteIdent(a.driverName, table), resultLimit))
 }
 
-// runQuery executes sql on the current connection and renders the result into
-// the Results table. Errors go to the status bar. (Async execution and
-// cancellation arrive in T-2b; history recording in T-3.)
+// queryResult holds a fetched result set.
+type queryResult struct {
+	cols []string
+	data [][]any
+}
+
+// runQuery executes sql off the UI goroutine so the interface stays responsive,
+// pushing the result back via QueueUpdateDraw. The query is cancellable with Esc.
+// (History recording arrives in T-3.)
 func (a *App) runQuery(sql string) {
 	if a.conn == nil {
 		a.setError("not connected")
 		return
 	}
-	start := time.Now()
-	rows, err := a.conn.Query(context.Background(), sql)
-	if err != nil {
-		a.setError(err.Error())
+	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := a.conn
+	a.running = true
+	a.cancel = cancel
+	a.SetStatus("running… ([::b]Esc[::-] to cancel)")
+	start := time.Now()
+
+	go func() {
+		res, err := fetch(ctx, conn, sql)
+		elapsed := time.Since(start)
+		a.app.QueueUpdateDraw(func() {
+			a.running = false
+			a.cancel = nil
+			cancel()
+			if err != nil {
+				a.setError(classifyErr(err).Error())
+				return
+			}
+			a.fillResults(res.cols, res.data)
+			a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
+		})
+	}()
+}
+
+// fetch runs sql and drains the rows. It is synchronous and UI-independent so it
+// can be unit-tested without the event loop.
+func fetch(ctx context.Context, conn driver.Conn, sql string) (queryResult, error) {
+	rows, err := conn.Query(ctx, sql)
+	if err != nil {
+		return queryResult{}, err
 	}
 	cols, data, err := drainRows(rows)
-	if err != nil {
-		a.setError(err.Error())
-		return
+	return queryResult{cols: cols, data: data}, err
+}
+
+// classifyErr turns context errors into clear messages (mirrors the CLI's B3).
+func classifyErr(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return errors.New("query cancelled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return errors.New("query timed out")
+	default:
+		return err
 	}
-	a.fillResults(cols, data)
-	a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(data), time.Since(start).Round(time.Millisecond), defaultStatus))
 }
 
 // fillResults renders columns + rows into the Results table (header fixed).
@@ -373,6 +420,18 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	if a.helpOpen {
 		a.hideHelp()
 		return nil
+	}
+
+	// Esc cancels a running query; when idle it passes through (e.g. to widgets).
+	if ev.Key() == tcell.KeyEscape {
+		if a.running {
+			if a.cancel != nil {
+				a.cancel()
+			}
+			a.SetStatus("cancelling…")
+			return nil
+		}
+		return ev
 	}
 
 	// Keys that work everywhere, including while typing in the SQL editor.
