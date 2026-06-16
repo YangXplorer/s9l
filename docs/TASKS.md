@@ -210,6 +210,55 @@
 
 **Phase 2 验收**：新增 MySQL 不触碰核心层；补全/分页可用；密码进系统 Keychain；config.yaml 无明文密码；`brew install` 可用。
 
+> 注：P2-2~P2-8 **暂保留**（用户优先做 Phase T TUI）。
+
+---
+
+## Phase T — 全屏 TUI（lazygit 式，tview）
+
+预估合计：~2–3 人周（做到可用且较打磨）。框架 `rivo/tview`（决策 D10）。设计详见 [TUI.md](./TUI.md)。
+原则：**只新增 `internal/tui/` 展示层，不改核心**；逻辑与 tview 渲染解耦以便单测。
+
+### T-0 脚手架（先做）
+- [ ] **T-0 TUI 骨架 + `s9l tui` 子命令**
+  - 产出：加 `rivo/tview` 依赖；`internal/tui/` 包；`s9l tui [conn]` 子命令；最小 `App`（启动全屏、`q`/`Ctrl-C` 退出、空 Flex 布局）
+  - DoD：`s9l tui` 能进全屏并干净退出；`go build`/`-short` 不受影响；TUI 逻辑可注入测试（SimulationScreen 启停冒烟）
+  - 依赖：现有 cmd 结构 · 预估：0.5d
+
+### T-1 MVP 垂直切片（连接→树→查询→结果）
+- [ ] **T-1a 连接列表面板**
+  - 产出：左上 List/TreeView 列出 config 连接；`Enter` 经 `secret.Resolve`+`driver.Open` 连接；带 `conn` 参数自动连；status 显示当前连接
+  - DoD：能从配置选连接并连上 SQLite/PG/MySQL；连接失败错误进 status 不崩溃
+  - 依赖：T-0 · 预估：0.75d
+- [ ] **T-1b schema 树面板**
+  - 产出：左下 TreeView，连接后经 `Metadata.Databases/Tables` 懒加载 库→表
+  - DoD：树正确展示当前连接的库与表（三库均可）
+  - 依赖：T-1a · 预估：0.75d
+- [ ] **T-1c 结果表格 + 选表查询**
+  - 产出：主区 `tview.Table`；`Enter` 选表 → `SELECT * FROM t LIMIT N`（N 可配）→ 填表格；NULL/宽列处理；上下/翻页/横向滚动；status 显示行数/耗时
+  - DoD：选表即见结果，可滚动；空结果/NULL 正常；查询走可取消 context
+  - 依赖：T-1b · 预估：1d
+- [ ] **T-1d 面板切换 + 帮助 + 退出**
+  - 产出：`Tab`/`1-3` 切面板、面板内导航、`?` 帮助浮层、`q` 退出
+  - DoD：键盘可在三面板间流畅操作；`?` 列出键位
+  - 依赖：T-1c · 预估：0.5d
+- **T-1 验收（MVP）**：`s9l tui pg` → 看到连接/schema 树 → 选表出结果表格 → 键盘浏览 → `q` 退出，全程不崩。
+
+### T-2 SQL 编辑器 + 异步执行
+- [ ] **T-2a SQL 编辑器面板**（多行 `TextArea`，`R`/`Ctrl-Enter` 运行 → 结果区；错误进 status）· 依赖 T-1c · 预估：1d
+- [ ] **T-2b 异步执行 + 取消 + 加载态**（查询在 goroutine，`QueueUpdateDraw` 回推；`Esc` 取消；spinner/状态）· 依赖 T-2a · 预估：0.75d
+
+### T-3 历史 / 收藏面板
+- [ ] **T-3a 历史面板**（`Ctrl-R`：列 `history.ListHistory`，`Enter` 回填编辑器/执行）· 依赖 T-2a · 预估：0.75d
+- [ ] **T-3b 收藏面板**（列/搜索 `saved`，`Enter` 运行，`s` 保存当前查询）· 依赖 T-2a · 预估：0.75d
+
+### T-4 打磨 + 测试 + 文档
+- [ ] **T-4a 键位/帮助/视觉打磨**（lazygit 式键位全集、聚焦高亮、错误提示）· 预估：1d
+- [ ] **T-4b 测试**（逻辑层单测：状态/schema 加载/查询编排；tcell `SimulationScreen` 冒烟启动→选表→出结果）· 预估：1d
+- [ ] **T-4c 文档**（README 增 TUI 章节 + 截图/演示；TESTING.md 记 TUI 手动验证项）· 预估：0.5d
+
+**Phase T 验收**：`s9l tui` 提供连接/树/结果/编辑器/历史/收藏的键盘驱动全屏体验；核心层零改动；CI 绿；TUI 逻辑有单测 + 冒烟，手动验证清单通过。
+
 ---
 
 ## Phase 3 — Backlog（v0.3+，按需，未排期）

@@ -20,7 +20,7 @@ s9l 是一个**终端数据库客户端**（快速连接数据库并进行数据
 ## 已拍板的关键决策（不要擅自推翻）
 
 - **语言：Go**。纯 Go 驱动、`CGO_ENABLED=0`（保证交叉编译与单二进制）。
-- **形态**：CLI 优先 + REPL，TUI 后置。`s9l <id>` 进 REPL，`s9l <id> -e "SQL"` 单次执行，非 TTY 时输出可解析格式（管道友好）。
+- **形态**：CLI/REPL（已交付）+ **全屏 TUI（lazygit 式，Phase T，一等交付，框架 `rivo/tview`）**。`s9l <id>` 进 REPL，`s9l <id> -e "SQL"` 单次执行（非 TTY 管道友好），`s9l tui [conn]` 进全屏界面。TUI 只新增 `internal/tui/` 展示层，复用 driver/config/secret/history，不改核心。详见 `docs/TUI.md`。
 - **配置**：`~/.config/s9l/config.yaml`（YAML，遵循 XDG，尊重 `$XDG_CONFIG_HOME`）。**绝不存明文密码**，只存 `password_ref`。
 - **凭据**：`SecretStore` 接口抽象。v0.1 用 `memory`（启动时输入，不落盘）；v0.2 接系统 Keychain（`zalando/go-keyring`）。
 - **历史/收藏**：SQLite `~/.config/s9l/history.db`（表 `query_history` / `saved_queries`，可选 `query_folders`）。
