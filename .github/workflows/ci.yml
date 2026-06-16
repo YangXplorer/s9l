@@ -46,7 +46,7 @@ jobs:
         with:
           go-version: stable
           cache: true
-      # Full suite incl. container-based PostgreSQL tests (testcontainers).
+      # Full suite incl. container-based PostgreSQL/MySQL tests (testcontainers).
       # GitHub-hosted ubuntu runners ship with Docker.
       - run: go test ./...
 
