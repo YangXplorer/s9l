@@ -249,7 +249,10 @@
   - 产出：`a.editor` 改为 `tview.TextArea`(多行可编辑, placeholder)；加入 navPanels(面板 4, `Tab`/`4` 可达)；**`F5` 运行**编辑器 SQL → `runQuery`(复用 T-1c)→ 结果/错误进 status；`onKey` 作用域化：编辑器聚焦时 `q`/`1-4`/`?` 等作为文本输入透传，仅 `F5`/`Tab`/`Ctrl-C` 全局生效；帮助/状态栏更新(F5 run、1/2/3/4)
   - DoD：编辑器输入 SQL、`F5` 运行见结果（白盒 `TestRunEditorExecutes`）✅；编辑时 `q`/`1`/`?` 不误触发快捷键（白盒 `TestEditorTypingPassesThrough`）✅；空输入提示；真实 pty 输入+`Ctrl-C` exit 0
   - 依赖：T-1c · 预估：1d · 注：运行键用 `F5`(DB 工具习惯, 终端可靠; `Ctrl-Enter` 不可靠);多语句拆分后续
-- [ ] **T-2b 异步执行 + 取消 + 加载态**（查询在 goroutine，`QueueUpdateDraw` 回推；`Esc` 取消；spinner/状态）· 依赖 T-2a · 预估：0.75d
+- [x] **T-2b 异步执行 + 取消 + 加载态**
+  - 产出：`runQuery` 改异步——查询在 goroutine 跑，结果经 `app.QueueUpdateDraw` 回推填表；执行中 status "running…([Esc] 取消)"、并发再触发提示"已在运行"；`Esc` → `a.cancel()` 取消(空闲时透传)；完成/出错经 `classifyErr`(Canceled→"query cancelled"/DeadlineExceeded→"query timed out")；同步核 `fetch`(query+drain)/`fillResults` 拆出便于单测
+  - DoD：查询不阻塞 UI（goroutine+QueueUpdateDraw）✅；`Esc` 取消运行中查询（白盒 `TestEscCancelsRunningQuery`，空闲透传）✅；`fetch` 成功/取消(`TestFetchCancelled`)、`classifyErr` 各分支、空编辑器不启协程 均白盒覆盖 ✅；真实 pty 启动/退出正常
+  - 依赖：T-2a · 预估：0.75d · 注：动态 spinner 动画留 T-4 打磨（当前静态运行态提示）；查询历史记录随 T-3
 
 ### T-3 历史 / 收藏面板
 - [ ] **T-3a 历史面板**（`Ctrl-R`：列 `history.ListHistory`，`Enter` 回填编辑器/执行）· 依赖 T-2a · 预估：0.75d
