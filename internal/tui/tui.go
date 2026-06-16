@@ -152,7 +152,53 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	a.conn = conn
 	a.connID = cc.ID
 	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)   %s", cc.ID, cc.Driver, defaultStatus))
+	a.loadSchema()
 	return nil
+}
+
+// loadSchema populates the schema tree with the connected database's tables via
+// the driver's Metadata capability. Table nodes carry the table name as their
+// reference (used by T-1c to run SELECT). Multi-database browsing (switching
+// databases) is a later enhancement — a single connection sees one database.
+func (a *App) loadSchema() {
+	root := tview.NewTreeNode(a.connID).SetColor(tcell.ColorYellow)
+	a.schema.SetRoot(root).SetCurrentNode(root)
+
+	md, ok := a.conn.(driver.Metadata)
+	if !ok {
+		root.AddChild(tview.NewTreeNode("(driver has no metadata)"))
+		return
+	}
+	rows, err := md.Tables(context.Background())
+	if err != nil {
+		a.setError("list tables: " + err.Error())
+		return
+	}
+	tables, err := collectFirstColumn(rows)
+	if err != nil {
+		a.setError("read tables: " + err.Error())
+		return
+	}
+	for _, name := range tables {
+		root.AddChild(tview.NewTreeNode(name).SetReference(name))
+	}
+}
+
+// collectFirstColumn reads the first column of every row as a string, closing
+// the rows. Used for metadata listings (table/database names).
+func collectFirstColumn(rows driver.Rows) ([]string, error) {
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		vals, err := rows.Values()
+		if err != nil {
+			return nil, err
+		}
+		if len(vals) > 0 {
+			out = append(out, fmt.Sprintf("%v", vals[0]))
+		}
+	}
+	return out, rows.Err()
 }
 
 func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
