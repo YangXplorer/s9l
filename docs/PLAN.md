@@ -22,7 +22,8 @@
 | # | 决策 | 选项 | 推荐默认 | 理由 |
 |---|------|------|---------|------|
 | D1 | **技术栈** | Go / TypeScript(Node) | **Go** ✅ | 单二进制分发、跨平台、`database/sql` 统一驱动接口天然契合"多 DB + 可拓展"，并发查询/流式读取性能好；OSS 终端工具 Go 生态最成熟（usql/dblab 都是 Go）。TS 适合做 TUI 但分发和原生 DB 驱动不如 Go。 |
-| D2 | **形态** | 纯命令式 CLI / 交互式 TUI / 两者结合 | **CLI 优先，REPL 次之，TUI 后置** ✅ | 命令式最容易做到"便捷"且可脚本化/管道化；REPL 满足探索式查询；全功能 TUI 成本高，放 Phase 3。 |
+| D2 | **形态** | 纯命令式 CLI / 交互式 TUI / 两者结合 | **三者结合：CLI/REPL（已交付 v0.1/v0.2）+ 全屏 TUI（lazygit 式，提升为一等交付）** ✅（已修订 2026-06-16） | 原计划 TUI 后置；现用户明确目标形态为 lazygit 式有界面工具，TUI 从 Backlog 升为独立大阶段 **Phase T**。CLI/REPL 不废弃（脚本化/管道仍需要），TUI 经 `s9l tui [conn]` 进入。 |
+| D10 | **TUI 框架** | tview / bubbletea / gocui | **`rivo/tview`** ✅（已拍板 2026-06-16） | DB 客户端最重的是"结果表格 + schema 树"，tview 内置 Table/TreeView/Flex，落地最快；k9s 同款、成熟纯 Go。bubbletea 更现代但表格/树需自拼、工期长；gocui(lazygit 本体)控件少。详见 [TUI.md](./TUI.md)。 |
 | D3 | **首批数据库** | — | **SQLite + PostgreSQL + MySQL** ✅ | SQLite 零依赖最易测试做脚手架；PG/MySQL 覆盖绝大多数场景。其余（SQL Server/Oracle/ClickHouse 等）走插件式后加。 |
 | D4 | **"可拓展性高"落地为** | 编译期 driver 抽象 / 运行期插件 | **先做编译期 Driver 接口抽象** ✅ | 一个清晰的 `Driver` interface + 注册机制即可满足"加新库只写一个适配文件"。运行期插件（plugin/wasm）复杂度高、收益不确定，明确放进 Backlog，不进 MVP。 |
 | D5 | **配置/连接管理** | 每次输 DSN / 命名连接 profile | **两者都要：支持裸 DSN，也支持 `~/.config/s9l/config.yaml` 命名连接（遵循 XDG，尊重 `$XDG_CONFIG_HOME`）** ✅ | "命令便捷"的核心是 `s9l mydb` 就能连，靠命名 profile 实现。存储架构见下方专节。 |
@@ -162,11 +163,14 @@ type SecretStore interface {
 **交付物**：能日常用 s9l 替代 psql 做基本查询。
 **验证标准**：`s9l mypg` 进 REPL 查询、`\dt` 列表、`-e` + 管道导出 CSV 全部可用；README 有完整使用示例。
 
-### Phase 2 — 多库扩展 + 体验增强（1~2 周）
-B4(MySQL) + D2(补全) + D3(历史) + 输出分页 + 错误信息打磨。验证：新增 MySQL 仅改动 driver 层，不动核心。
+### Phase 2 — 多库扩展 + 体验增强（进行中）
+MySQL(P2-1 ✅) + 补全 + 系统 Keychain + 输出分页 + 错误打磨 + Homebrew。验证：新增 MySQL 仅改 driver 层，不动核心（已验证）。其余 P2 任务**暂保留**（用户优先做 TUI）。
+
+### Phase T — 全屏 TUI（lazygit 式，新增的一等交付）
+基于已有 driver/config/secret/history 层，加一层 tview 多面板界面：连接列表 + schema 树 + 结果表格 + SQL 编辑器 + 历史/收藏面板。经 `s9l tui [conn]` 进入。**先做 MVP 垂直切片**（连接→schema 树→选表查询→结果浏览），再迭代编辑器/历史/收藏/键位打磨。详见 [TUI.md](./TUI.md)，WBS 见 [TASKS.md](./TASKS.md) Phase T。
 
 ### Phase 3 — 进阶（按需，Backlog）
-TUI 模式、更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插件、SSH 隧道、数据导入导出、查询收藏。
+更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插件、SSH 隧道、数据导入导出。
 
 ## 依赖与阻塞
 
@@ -202,6 +206,6 @@ TUI 模式、更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插
 ## 假设清单（如与事实不符请纠正）
 
 - A-1：这是个人/小团队的 OSS 项目，无硬性 deadline，可按阶段迭代。
-- A-2：目标用户是开发者（习惯命令行 psql/mysql），不是非技术人员 → 形态偏 CLI 合理。
+- A-2（已修订 2026-06-16）：目标用户是开发者，但期望**像 lazygit 那样的全屏交互界面**作为主形态。CLI/REPL 保留用于脚本化，TUI 提升为一等交付（见 D2/Phase T）。
 - A-3："适用于多数常用数据库" = 关系型为主（PG/MySQL/SQLite/SQL Server 等），NoSQL（Mongo/Redis）非首批目标。
 - A-4：你接受"先把 1~2 个库做好用"，而不是一上来铺开十几个库。
