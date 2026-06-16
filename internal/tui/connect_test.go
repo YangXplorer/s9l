@@ -98,3 +98,47 @@ func TestLoadSchemaShowsTables(t *testing.T) {
 		t.Fatalf("schema tree missing tables, got %v", got)
 	}
 }
+
+func TestRunTableQueryFillsResults(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "t.db")
+	cfg := sqliteCfg("demo", db)
+	a := New(Options{Config: cfg, Store: secret.NewMemory()})
+	defer a.closeConn()
+
+	cc, _ := cfg.Get("demo")
+	if err := a.connect(cc); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := a.conn.Exec(ctx, "create table t(id int, name text)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.conn.Exec(ctx, "insert into t values(1,'a'),(2,null)"); err != nil {
+		t.Fatal(err)
+	}
+
+	a.runTableQuery("t")
+
+	// Header row + 2 data rows.
+	if got := a.results.GetRowCount(); got != 3 {
+		t.Fatalf("results row count = %d, want 3", got)
+	}
+	if h := a.results.GetCell(0, 0).Text; h != "id" {
+		t.Errorf("header(0,0) = %q, want id", h)
+	}
+	if v := a.results.GetCell(1, 1).Text; v != "a" {
+		t.Errorf("cell(1,1) = %q, want a", v)
+	}
+	if v := a.results.GetCell(2, 1).Text; v != "NULL" {
+		t.Errorf("NULL cell(2,1) = %q, want NULL", v)
+	}
+}
+
+func TestQuoteIdent(t *testing.T) {
+	if got := quoteIdent("mysql", "tab`le"); got != "`tab``le`" {
+		t.Errorf("mysql quote = %q", got)
+	}
+	if got := quoteIdent("postgres", `ta"ble`); got != `"ta""ble"` {
+		t.Errorf("postgres quote = %q", got)
+	}
+}
