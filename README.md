@@ -3,8 +3,8 @@
 A fast terminal database client. Connect to a database and run queries with one
 short command — simple to use, scriptable, and easy to extend to new databases.
 
-> Status: early development (v0.x). SQLite and PostgreSQL are supported today;
-> MySQL and more are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
+> Status: early development (v0.x). SQLite, PostgreSQL and MySQL are supported
+> today; more databases are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features
 
