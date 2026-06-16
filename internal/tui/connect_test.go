@@ -178,6 +178,44 @@ func TestHelpToggle(t *testing.T) {
 	}
 }
 
+func TestRunEditorExecutes(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "t.db")
+	cfg := sqliteCfg("demo", db)
+	a := New(Options{Config: cfg, Store: secret.NewMemory()})
+	defer a.closeConn()
+
+	cc, _ := cfg.Get("demo")
+	if err := a.connect(cc); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	a.editor.SetText("select 7 as n", false)
+
+	// F5 runs the editor's SQL.
+	a.onKey(tcell.NewEventKey(tcell.KeyF5, 0, tcell.ModNone))
+
+	if got := a.results.GetRowCount(); got != 2 { // header + 1 row
+		t.Fatalf("results rows = %d, want 2", got)
+	}
+	if v := a.results.GetCell(1, 0).Text; v != "7" {
+		t.Errorf("cell(1,0) = %q, want 7", v)
+	}
+}
+
+func TestEditorTypingPassesThrough(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.focusPanel(3) // focus the SQL editor
+
+	// 'q' / '1' / '?' must NOT be treated as shortcuts while editing.
+	for _, r := range []rune{'q', '1', '?'} {
+		if ev := a.onKey(tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)); ev == nil {
+			t.Fatalf("rune %q should pass through to the editor, not be consumed", r)
+		}
+	}
+	if a.helpOpen {
+		t.Error("'?' while editing must not open help")
+	}
+}
+
 func TestTabCyclesFocus(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
 	a.onKey(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone))

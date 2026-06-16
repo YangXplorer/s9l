@@ -50,7 +50,7 @@ type App struct {
 	connList *tview.List
 	schema   *tview.TreeView
 	results  *tview.Table
-	editor   *tview.TextView
+	editor   *tview.TextArea
 	status   *tview.TextView
 
 	focusIdx int
@@ -106,8 +106,8 @@ func (a *App) buildLayout() {
 	a.results.SetSelectable(true, false)
 	a.results.SetBorder(true).SetTitle(" Results ")
 
-	a.editor = tview.NewTextView()
-	a.editor.SetBorder(true).SetTitle(" SQL ")
+	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
+	a.editor.SetBorder(true).SetTitle(" SQL (F5 run) ")
 
 	a.status = tview.NewTextView().SetDynamicColors(true)
 	a.SetStatus(defaultStatus)
@@ -130,9 +130,9 @@ func (a *App) buildLayout() {
 	a.focusPanel(0)
 }
 
-// navPanels are the focusable panels cycled by Tab / 1-3.
+// navPanels are the focusable panels cycled by Tab / 1-4.
 func (a *App) navPanels() []tview.Primitive {
-	return []tview.Primitive{a.connList, a.schema, a.results}
+	return []tview.Primitive{a.connList, a.schema, a.results, a.editor}
 }
 
 // focusPanel moves focus to panel i and highlights its border.
@@ -142,6 +142,7 @@ func (a *App) focusPanel(i int) {
 	a.connList.SetBorderColor(borderColor(i == 0))
 	a.schema.SetBorderColor(borderColor(i == 1))
 	a.results.SetBorderColor(borderColor(i == 2))
+	a.editor.SetBorderColor(borderColor(i == 3))
 }
 
 func borderColor(focused bool) tcell.Color {
@@ -179,8 +180,9 @@ func centered(p tview.Primitive, width, height int) tview.Primitive {
 const helpText = `[::b]s9l TUI[::-]
 
   Tab / Shift-Tab   switch panel
-  1 / 2 / 3         Connections / Schema / Results
+  1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
+  F5                run SQL editor
   Up / Down         navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
@@ -373,17 +375,29 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
-	switch {
-	case ev.Key() == tcell.KeyCtrlC:
+	// Keys that work everywhere, including while typing in the SQL editor.
+	switch ev.Key() {
+	case tcell.KeyCtrlC:
 		a.app.Stop()
 		return nil
-	case ev.Key() == tcell.KeyTab:
+	case tcell.KeyF5:
+		a.runEditor()
+		return nil
+	case tcell.KeyTab:
 		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
 		return nil
-	case ev.Key() == tcell.KeyBacktab:
+	case tcell.KeyBacktab:
 		a.focusPanel((a.focusIdx + len(a.navPanels()) - 1) % len(a.navPanels()))
 		return nil
-	case ev.Key() == tcell.KeyRune:
+	}
+
+	// When the SQL editor is focused, let everything else through so the user
+	// can type freely (letters, digits, '?', 'q' are text, not shortcuts).
+	if a.app.GetFocus() == a.editor {
+		return ev
+	}
+
+	if ev.Key() == tcell.KeyRune {
 		switch ev.Rune() {
 		case 'q':
 			a.app.Stop()
@@ -391,21 +405,26 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case '?':
 			a.showHelp()
 			return nil
-		case '1':
-			a.focusPanel(0)
-			return nil
-		case '2':
-			a.focusPanel(1)
-			return nil
-		case '3':
-			a.focusPanel(2)
+		case '1', '2', '3', '4':
+			a.focusPanel(int(ev.Rune() - '1'))
 			return nil
 		}
 	}
 	return ev
 }
 
-const defaultStatus = "[::b]Tab[::-] panel  [::b]Enter[::-] open  [::b]?[::-] help  [::b]q[::-] quit"
+// runEditor runs the SQL currently in the editor (F5). Empty input is a no-op
+// with a hint; results/errors land in the Results table / status bar.
+func (a *App) runEditor() {
+	sql := strings.TrimSpace(a.editor.GetText())
+	if sql == "" {
+		a.SetStatus("SQL editor is empty   " + defaultStatus)
+		return
+	}
+	a.runQuery(sql)
+}
+
+const defaultStatus = "[::b]Tab[::-] panel  [::b]Enter[::-] open  [::b]F5[::-] run  [::b]?[::-] help  [::b]q[::-] quit"
 
 // SetStatus updates the bottom status/help bar (supports tview color tags).
 func (a *App) SetStatus(s string) { a.status.SetText(" " + s) }
