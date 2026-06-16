@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/tui"
 
 	"github.com/gdamore/tcell/v2"
@@ -12,7 +13,7 @@ import (
 // TestAppQuitsOnQ drives the scaffold with a SimulationScreen: after the first
 // draw it sends 'q' and the app must exit cleanly (no real terminal needed).
 func TestAppQuitsOnQ(t *testing.T) {
-	a := tui.New(tui.Options{})
+	a := tui.New(tui.Options{Config: &config.Config{}})
 	a.SetScreen(tcell.NewSimulationScreen(""))
 	a.OnReady(func() { a.SendKey('q') })
 
