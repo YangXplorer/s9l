@@ -263,6 +263,78 @@ func TestShowHistoryDisabled(t *testing.T) {
 	}
 }
 
+func TestSaveCurrent(t *testing.T) {
+	h := tempHistory(t)
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory(), History: h})
+	a.connID = "demo"
+	a.editor.SetText("select * from orders where total > 100", false)
+
+	a.saveCurrent()
+
+	items, err := h.ListSaved(context.Background())
+	if err != nil {
+		t.Fatalf("list saved: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("saved queries = %d, want 1", len(items))
+	}
+	if items[0].SQL != "select * from orders where total > 100" {
+		t.Errorf("saved SQL = %q", items[0].SQL)
+	}
+	if items[0].Title == "" || items[0].ConnectionID != "demo" {
+		t.Errorf("saved meta unexpected: %+v", items[0])
+	}
+}
+
+func TestSaveCurrentEmptyDoesNotSave(t *testing.T) {
+	h := tempHistory(t)
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory(), History: h})
+	a.editor.SetText("   ", false)
+	a.saveCurrent()
+
+	items, _ := h.ListSaved(context.Background())
+	if len(items) != 0 {
+		t.Fatalf("empty editor must not save, got %d", len(items))
+	}
+}
+
+func TestShowSavedOverlay(t *testing.T) {
+	h := tempHistory(t)
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory(), History: h})
+	if _, err := h.SaveQuery(context.Background(), history.SavedQuery{Title: "recent", SQL: "select 1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.showSaved()
+	if !a.savedOpen || !a.pages.HasPage("saved") {
+		t.Fatal("Ctrl-F should open the saved overlay")
+	}
+	a.hideSaved()
+	if a.savedOpen || a.pages.HasPage("saved") {
+		t.Fatal("Esc/Ctrl-F should close the saved overlay")
+	}
+}
+
+func TestSaveDisabledIsNoop(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()}) // no History
+	a.editor.SetText("select 1", false)
+	a.saveCurrent() // must not panic
+	a.showSaved()
+	if a.savedOpen {
+		t.Fatal("saved overlay must not open when history is disabled")
+	}
+}
+
+func TestTitleFrom(t *testing.T) {
+	if got := titleFrom("  select\n  1  "); got != "select 1" {
+		t.Errorf("titleFrom collapse = %q", got)
+	}
+	long := titleFrom("select aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if len([]rune(long)) > 50 {
+		t.Errorf("titleFrom should cap at 50 runes, got %d", len([]rune(long)))
+	}
+}
+
 func TestQuoteIdent(t *testing.T) {
 	if got := quoteIdent("mysql", "tab`le"); got != "`tab``le`" {
 		t.Errorf("mysql quote = %q", got)
