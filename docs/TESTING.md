@@ -71,7 +71,15 @@ go test -bench=. ./internal/driver/...
 - **Job `unit`**：`go test -short ./...` + `golangci-lint`（每个 PR，快）
 - **Job `integration`**：`go test ./...`，runner 自带 Docker，testcontainers 直接用（PR 必跑或 nightly，视耗时定）
 
+## TUI（Phase T）测试
+
+- **逻辑层白盒单测**（`internal/tui`，`package tui`）：连接、schema 加载、`fetch`/`fillResults`、`classifyErr`、键路由（focus/help/history/saved 开关、Esc 取消、编辑器透传）等都做成可注入（`Options.Config`/`Store`/`History`）、不依赖事件循环的同步函数直接断言。
+- **启停冒烟**：用 tcell `SimulationScreen` 注入屏幕，`OnReady`+`SendKey` 驱动启动→送 `q`→干净退出，无需真实终端。
+- **异步路径**：查询走 goroutine + `QueueUpdateDraw`，无事件循环时会阻塞，故**不在单测里触发 `runQuery`**；改测其同步核（`fetch`/`fillResults`）+ 取消（预取消 ctx）。
+- **手动验证清单**（真实终端 / pty，自动化不覆盖视觉与交互手感）：面板切换高亮、schema 选表出结果、F5 运行、Esc 取消长查询、`Ctrl-R`/`Ctrl-F`/`Ctrl-S` 历史·收藏·保存、`?` 帮助、`q`/`Ctrl-C` 退出。
+
 ## 边界 / 不测什么
 
 - **系统 Keychain 真实读写不进自动化测试**：CI 无 GUI keyring、跨平台 flaky。`keychain.go` 靠接口隔离 + macOS 本地手动冒烟；自动化只测 `memory` 实现与 `password_ref` 解析。
 - 不测 DB 引擎本身性能；"效率"相关只做冒烟基准（10w 行流式不 OOM，用 SQLite 造大表）。
+- TUI 视觉渲染与按键手感不做自动化（见上方手动验证清单）。
