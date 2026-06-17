@@ -259,7 +259,11 @@
   - 产出：`Ctrl-R` 打开历史浮层（`history.ListHistory` 最近 100 条，时间/ok·ERR/SQL 单行）；`Enter` 回填编辑器(不自动执行, 用户审阅后 F5)+聚焦编辑器+关浮层；`Esc`/`Ctrl-R` 关闭；TUI 执行查询亦经 `recordHistory` 写入(含失败/耗时/行数)；history 经 `Options.History` 注入(cmd 开默认库, New 不做 I/O, 缺失则降级禁用)
   - DoD：Ctrl-R 列历史、Enter 回填编辑器（白盒 `TestShowHistoryAndUseSQL`）✅；执行写历史（`TestRecordHistory` 成功+失败）✅；history 禁用时 Ctrl-R/记录 无操作不崩（`TestShowHistoryDisabled`/`...DisabledIsNoop`）✅；真实 pty Ctrl-R→Esc→q exit 0
   - 依赖：T-2a · 预估：0.75d · 注：database_name 暂空；自动执行选项后续
-- [ ] **T-3b 收藏面板**（列/搜索 `saved`，`Enter` 运行，`s` 保存当前查询）· 依赖 T-2a · 预估：0.75d
+- [x] **T-3b 收藏面板**
+  - 产出：`Ctrl-S` 保存编辑器 SQL 为收藏（标题自动取 SQL 首 50 字, connID）；`Ctrl-F` 打开收藏浮层（`history.ListSaved`，title/conn/tags/SQL），`Enter` 运行选中（回填编辑器+`runQuery`），`Esc`/`Ctrl-F` 关闭；空编辑器不保存提示；history 禁用降级；帮助/状态栏更新
+  - 键位说明：`Ctrl-S`(tcell raw 模式禁用 XON/XOFF, Ctrl-S 可用) / `Ctrl-F` favorites
+  - DoD：保存收藏（白盒 `TestSaveCurrent`，空不存）✅；Ctrl-F 列收藏并可开关（`TestShowSavedOverlay`）✅；禁用 no-op（`TestSaveDisabledIsNoop`）✅；真实 pty 编辑→Ctrl-S→Ctrl-F→Esc→Ctrl-C exit 0 且 `saved list` 确认已存 ✅
+  - 依赖：T-2a · 预估：0.75d · 注：标题/标签编辑、搜索框后续（当前列全部）
 
 ### T-4 打磨 + 测试 + 文档
 - [ ] **T-4a 键位/帮助/视觉打磨**（lazygit 式键位全集、聚焦高亮、错误提示）· 预估：1d

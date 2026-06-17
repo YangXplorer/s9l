@@ -62,6 +62,7 @@ type App struct {
 	focusIdx    int
 	helpOpen    bool
 	historyOpen bool
+	savedOpen   bool
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -195,6 +196,8 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             connect / preview table
   F5                run SQL editor
   Ctrl-R            query history (Enter loads it)
+  Ctrl-F            saved queries (Enter runs it)
+  Ctrl-S            save editor SQL as a favorite
   Up / Down         navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
@@ -402,6 +405,85 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// saveCurrent saves the editor's SQL as a favorite (Ctrl-S). The title is
+// derived from the SQL; editing the title is a later enhancement.
+func (a *App) saveCurrent() {
+	if a.hist == nil {
+		a.SetStatus("history unavailable   " + defaultStatus)
+		return
+	}
+	sql := strings.TrimSpace(a.editor.GetText())
+	if sql == "" {
+		a.SetStatus("nothing to save: SQL editor is empty   " + defaultStatus)
+		return
+	}
+	id, err := a.hist.SaveQuery(context.Background(), history.SavedQuery{
+		Title:        titleFrom(sql),
+		ConnectionID: a.connID,
+		SQL:          sql,
+	})
+	if err != nil {
+		a.setError("save: " + err.Error())
+		return
+	}
+	a.SetStatus(fmt.Sprintf("saved query #%d   %s", id, defaultStatus))
+}
+
+// showSaved opens an overlay of saved queries (Ctrl-F); Enter runs one.
+// Ctrl-F / Esc close it.
+func (a *App) showSaved() {
+	if a.hist == nil {
+		a.SetStatus("history unavailable   " + defaultStatus)
+		return
+	}
+	items, err := a.hist.ListSaved(context.Background())
+	if err != nil {
+		a.setError("saved: " + err.Error())
+		return
+	}
+
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true).SetTitle(" Saved — Enter: run · Esc: close ")
+	if len(items) == 0 {
+		list.AddItem("(no saved queries — Ctrl-S to save the editor)", "", 0, nil)
+	}
+	for _, q := range items {
+		meta := q.ConnectionID
+		if q.Tags != "" {
+			meta += " [" + q.Tags + "]"
+		}
+		label := fmt.Sprintf("%s  %s  %s", q.Title, meta, oneLine(q.SQL))
+		sql := q.SQL
+		list.AddItem(label, "", 0, func() { a.runSavedQuery(sql) })
+	}
+
+	a.pages.AddPage("saved", centered(list, 90, 22), true, true)
+	a.app.SetFocus(list)
+	a.savedOpen = true
+}
+
+func (a *App) hideSaved() {
+	a.pages.RemovePage("saved")
+	a.savedOpen = false
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
+// runSavedQuery closes the overlay and runs the chosen saved query.
+func (a *App) runSavedQuery(sql string) {
+	a.hideSaved()
+	a.editor.SetText(sql, true)
+	a.runQuery(sql)
+}
+
+// titleFrom derives a saved-query title from its SQL (first 50 runes, one line).
+func titleFrom(sql string) string {
+	r := []rune(oneLine(sql))
+	if len(r) > 50 {
+		return string(r[:50])
+	}
+	return string(r)
+}
+
 // fillResults renders columns + rows into the Results table (header fixed).
 func (a *App) fillResults(cols []string, data [][]any) {
 	a.results.Clear()
@@ -515,6 +597,16 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the saved overlay is open, Esc / Ctrl-F close it; other keys go
+	// to the list.
+	if a.savedOpen {
+		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlF {
+			a.hideSaved()
+			return nil
+		}
+		return ev
+	}
+
 	// Esc cancels a running query; when idle it passes through (e.g. to widgets).
 	if ev.Key() == tcell.KeyEscape {
 		if a.running {
@@ -537,6 +629,12 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyCtrlR:
 		a.showHistory()
+		return nil
+	case tcell.KeyCtrlS:
+		a.saveCurrent()
+		return nil
+	case tcell.KeyCtrlF:
+		a.showSaved()
 		return nil
 	case tcell.KeyTab:
 		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
@@ -579,7 +677,7 @@ func (a *App) runEditor() {
 	a.runQuery(sql)
 }
 
-const defaultStatus = "[::b]Tab[::-] panel  [::b]F5[::-] run  [::b]^R[::-] history  [::b]?[::-] help  [::b]q[::-] quit"
+const defaultStatus = "[::b]F5[::-] run  [::b]^R[::-] history  [::b]^F[::-] saved  [::b]^S[::-] save  [::b]?[::-] help  [::b]q[::-] quit"
 
 // SetStatus updates the bottom status/help bar (supports tview color tags).
 func (a *App) SetStatus(s string) { a.status.SetText(" " + s) }
