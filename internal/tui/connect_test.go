@@ -5,8 +5,10 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/secret"
 
@@ -322,6 +324,70 @@ func TestSaveDisabledIsNoop(t *testing.T) {
 	a.showSaved()
 	if a.savedOpen {
 		t.Fatal("saved overlay must not open when history is disabled")
+	}
+}
+
+// TestEndToEndSelectTable drives the real event loop with a SimulationScreen:
+// auto-connect → select the first table in the schema tree → async query →
+// results table is populated. It exercises connect/loadSchema/onSchemaSelect/
+// runQuery (goroutine + QueueUpdateDraw) together.
+func TestEndToEndSelectTable(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "t.db")
+
+	// Seed a table so auto-connect's schema load finds it.
+	seed, err := driver.Open(context.Background(), "sqlite", db)
+	if err != nil {
+		t.Fatalf("seed open: %v", err)
+	}
+	if _, err := seed.Exec(context.Background(), "create table widgets(id int, name text)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Exec(context.Background(), "insert into widgets values(1,'a'),(2,'b'),(3,'c')"); err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Close()
+
+	a := New(Options{Conn: "demo", Config: sqliteCfg("demo", db), Store: secret.NewMemory()})
+	a.SetScreen(tcell.NewSimulationScreen(""))
+
+	done := make(chan struct{}, 1)
+	a.onResult = func() {
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+	}
+	a.OnReady(func() {
+		// After the first draw, the schema tree is loaded (auto-connect ran in
+		// New). Select the first table node, as Enter would.
+		if kids := a.schema.GetRoot().GetChildren(); len(kids) > 0 {
+			a.onSchemaSelect(kids[0])
+		}
+	})
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- a.Run() }()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		a.Stop()
+		t.Fatal("query did not complete within 10s")
+	}
+
+	a.Stop()
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Run's deferred closeConn already released the connection.
+
+	// Safe to read widgets now that the loop has stopped: header + 3 rows.
+	if got := a.results.GetRowCount(); got != 4 {
+		t.Fatalf("results row count = %d, want 4 (header + 3)", got)
+	}
+	if h := a.results.GetCell(0, 1).Text; h != "name" {
+		t.Errorf("header(0,1) = %q, want name", h)
 	}
 }
 

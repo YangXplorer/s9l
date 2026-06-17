@@ -67,6 +67,8 @@ type App struct {
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
 
+	onResult func() // test hook fired after a query completes (UI goroutine)
+
 	conn       driver.Conn
 	connID     string
 	driverName string
@@ -301,11 +303,14 @@ func (a *App) runQuery(sql string) {
 				cerr := classifyErr(err)
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
-				return
+			} else {
+				a.fillResults(res.cols, res.data)
+				a.recordHistory(sql, elapsed, len(res.data), nil)
+				a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
 			}
-			a.fillResults(res.cols, res.data)
-			a.recordHistory(sql, elapsed, len(res.data), nil)
-			a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
+			if a.onResult != nil {
+				a.onResult()
+			}
 		})
 	}()
 }
