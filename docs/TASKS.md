@@ -268,7 +268,7 @@
 ### T-4 打磨 + 测试 + 文档
 - [ ] **T-4a 键位/帮助/视觉打磨**（lazygit 式键位全集、聚焦高亮、错误提示）· 预估：1d
 - [ ] **T-4b 测试**（逻辑层单测：状态/schema 加载/查询编排；tcell `SimulationScreen` 冒烟启动→选表→出结果）· 预估：1d
-- [ ] **T-4c 文档**（README 增 TUI 章节 + 截图/演示；TESTING.md 记 TUI 手动验证项）· 预估：0.5d
+- [x] **T-4c 文档**：README 增 `## Terminal UI` 章节（`s9l tui`、面板、完整键位表）+ 特性条目；TESTING.md 增 TUI 测试策略（白盒/SimulationScreen/手动验证清单）· 预估：0.5d · 注：截图/录屏后续
 
 **Phase T 验收**：`s9l tui` 提供连接/树/结果/编辑器/历史/收藏的键盘驱动全屏体验；核心层零改动；CI 绿；TUI 逻辑有单测 + 冒烟，手动验证清单通过。
 
