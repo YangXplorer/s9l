@@ -210,6 +210,68 @@
 
 **Phase 2 验收**：新增 MySQL 不触碰核心层；补全/分页可用；密码进系统 Keychain；config.yaml 无明文密码；`brew install` 可用。
 
+> 注：P2-2~P2-8 **暂保留**（用户优先做 Phase T TUI）。
+
+---
+
+## Phase T — 全屏 TUI（lazygit 式，tview）
+
+预估合计：~2–3 人周（做到可用且较打磨）。框架 `rivo/tview`（决策 D10）。设计详见 [TUI.md](./TUI.md)。
+原则：**只新增 `internal/tui/` 展示层，不改核心**；逻辑与 tview 渲染解耦以便单测。
+
+### T-0 脚手架（先做）
+- [x] **T-0 TUI 骨架 + `s9l tui` 子命令**
+  - 产出：`rivo/tview`+`gdamore/tcell/v2` 依赖；`internal/tui/tui.go`（`App`：Flex 占位 body + 状态栏、`q`/`Ctrl-C` 退出、测试接缝 SetScreen/OnReady/SendKey）；`cmd/s9l/tui.go` `runTUI` + `s9l tui [conn]` 子命令 + usage
+  - DoD：SimulationScreen 测试启动→送 `q`→干净退出 ✅；真实 pty 冒烟 exit 0 ✅；`go build`/`-short`/lint 不受影响 ✅
+  - 依赖：现有 cmd 结构 · 预估：0.5d
+
+### T-1 MVP 垂直切片（连接→树→查询→结果）
+- [x] **T-1a 连接列表面板**
+  - 产出：lazygit 式多面板 Flex 骨架（Connections/Schema/Results/SQL 占位 + 状态栏）；Connections List 来自 config；`Enter` 经 `secret.Resolve`+`cc.DSN`+`driver.Open` 连接；`s9l tui <conn>` 自动连；status 显示当前连接/错误；退出时关连接；Options 可注入 Config/Store 便于测试
+  - DoD：从配置选连接并连上（SQLite 实测；PG/MySQL 同路径）✅；连接失败进 status 不崩溃、conn 保持 nil ✅；白盒测试 connect/auto-connect/错误/列表填充 + 真实 pty 冒烟 exit 0 ✅
+  - 依赖：T-0 · 预估：0.75d
+- [x] **T-1b schema 树面板**
+  - 产出：左下 TreeView，连接成功后 `loadSchema` 经 `driver.Metadata.Tables()` 列出当前库的表；表节点以表名为 reference（供 T-1c 选表查询）；无 Metadata 能力/错误时给提示/进 status 不崩溃；`collectFirstColumn` 读元数据首列
+  - DoD：树正确展示当前连接库的表（SQLite 白盒测试；PG/MySQL 走同一 Metadata 路径，已有各自 metadata IT）✅
+  - 依赖：T-1a · 预估：0.75d · 注：单连接只见一个库；跨库切换（库→表 多级）留作后续强化
+- [x] **T-1c 结果表格 + 选表查询**
+  - 产出：schema 树 `Enter` 表节点 → `runTableQuery` → `SELECT * FROM <quoteIdent> LIMIT 200` → `runQuery` 填 `tview.Table`（表头固定+加粗、NULL→"NULL"、行可选可滚动）；status 显示行数/耗时；`quoteIdent` 按方言转义(mysql 反引号/其余双引号)；`drainRows`/`cellString` 辅助
+  - DoD：选表即见结果（白盒 `TestRunTableQueryFillsResults`：表头+2行+NULL 正确）✅；空结果/NULL 正常 ✅；错误进 status 不崩溃
+  - 依赖：T-1b · 预估：1d · 注：当前同步执行（可取消 context 是 T-2b）；查询历史记录随 T-3
+- [x] **T-1d 面板切换 + 帮助 + 退出**
+  - 产出：`tview.Pages`(main+help)；`onKey`：`Tab`/`Shift-Tab` 循环、`1/2/3` 直达 Connections/Schema/Results、聚焦面板黄色高亮、`?` 帮助浮层(居中, 任意键关闭)、`q`/`Ctrl-C` 退出；面板内导航由 tview 控件(方向键)处理；状态栏更新提示
+  - DoD：键盘在三面板间切换并高亮 ✅；`?` 列出键位、任意键关闭 ✅；`q` 退出 ✅（白盒 focus/help/Tab 测试 + 真实 pty `q`/`?→x→q` 均 exit 0）
+  - 依赖：T-1c · 预估：0.5d
+- **T-1 验收（MVP）✅**：`s9l tui <conn>` → 连接列表/schema 树 → 选表出结果表格 → 键盘切换面板/浏览 → `?` 帮助 → `q` 退出，全程不崩（SQLite 实测；PG/MySQL 同路径）。
+
+### T-2 SQL 编辑器 + 异步执行
+- [x] **T-2a SQL 编辑器面板**
+  - 产出：`a.editor` 改为 `tview.TextArea`(多行可编辑, placeholder)；加入 navPanels(面板 4, `Tab`/`4` 可达)；**`F5` 运行**编辑器 SQL → `runQuery`(复用 T-1c)→ 结果/错误进 status；`onKey` 作用域化：编辑器聚焦时 `q`/`1-4`/`?` 等作为文本输入透传，仅 `F5`/`Tab`/`Ctrl-C` 全局生效；帮助/状态栏更新(F5 run、1/2/3/4)
+  - DoD：编辑器输入 SQL、`F5` 运行见结果（白盒 `TestRunEditorExecutes`）✅；编辑时 `q`/`1`/`?` 不误触发快捷键（白盒 `TestEditorTypingPassesThrough`）✅；空输入提示；真实 pty 输入+`Ctrl-C` exit 0
+  - 依赖：T-1c · 预估：1d · 注：运行键用 `F5`(DB 工具习惯, 终端可靠; `Ctrl-Enter` 不可靠);多语句拆分后续
+- [x] **T-2b 异步执行 + 取消 + 加载态**
+  - 产出：`runQuery` 改异步——查询在 goroutine 跑，结果经 `app.QueueUpdateDraw` 回推填表；执行中 status "running…([Esc] 取消)"、并发再触发提示"已在运行"；`Esc` → `a.cancel()` 取消(空闲时透传)；完成/出错经 `classifyErr`(Canceled→"query cancelled"/DeadlineExceeded→"query timed out")；同步核 `fetch`(query+drain)/`fillResults` 拆出便于单测
+  - DoD：查询不阻塞 UI（goroutine+QueueUpdateDraw）✅；`Esc` 取消运行中查询（白盒 `TestEscCancelsRunningQuery`，空闲透传）✅；`fetch` 成功/取消(`TestFetchCancelled`)、`classifyErr` 各分支、空编辑器不启协程 均白盒覆盖 ✅；真实 pty 启动/退出正常
+  - 依赖：T-2a · 预估：0.75d · 注：动态 spinner 动画留 T-4 打磨（当前静态运行态提示）；查询历史记录随 T-3
+
+### T-3 历史 / 收藏面板
+- [x] **T-3a 历史面板**
+  - 产出：`Ctrl-R` 打开历史浮层（`history.ListHistory` 最近 100 条，时间/ok·ERR/SQL 单行）；`Enter` 回填编辑器(不自动执行, 用户审阅后 F5)+聚焦编辑器+关浮层；`Esc`/`Ctrl-R` 关闭；TUI 执行查询亦经 `recordHistory` 写入(含失败/耗时/行数)；history 经 `Options.History` 注入(cmd 开默认库, New 不做 I/O, 缺失则降级禁用)
+  - DoD：Ctrl-R 列历史、Enter 回填编辑器（白盒 `TestShowHistoryAndUseSQL`）✅；执行写历史（`TestRecordHistory` 成功+失败）✅；history 禁用时 Ctrl-R/记录 无操作不崩（`TestShowHistoryDisabled`/`...DisabledIsNoop`）✅；真实 pty Ctrl-R→Esc→q exit 0
+  - 依赖：T-2a · 预估：0.75d · 注：database_name 暂空；自动执行选项后续
+- [x] **T-3b 收藏面板**
+  - 产出：`Ctrl-S` 保存编辑器 SQL 为收藏（标题自动取 SQL 首 50 字, connID）；`Ctrl-F` 打开收藏浮层（`history.ListSaved`，title/conn/tags/SQL），`Enter` 运行选中（回填编辑器+`runQuery`），`Esc`/`Ctrl-F` 关闭；空编辑器不保存提示；history 禁用降级；帮助/状态栏更新
+  - 键位说明：`Ctrl-S`(tcell raw 模式禁用 XON/XOFF, Ctrl-S 可用) / `Ctrl-F` favorites
+  - DoD：保存收藏（白盒 `TestSaveCurrent`，空不存）✅；Ctrl-F 列收藏并可开关（`TestShowSavedOverlay`）✅；禁用 no-op（`TestSaveDisabledIsNoop`）✅；真实 pty 编辑→Ctrl-S→Ctrl-F→Esc→Ctrl-C exit 0 且 `saved list` 确认已存 ✅
+  - 依赖：T-2a · 预估：0.75d · 注：标题/标签编辑、搜索框后续（当前列全部）
+
+### T-4 打磨 + 测试 + 文档
+- [ ] **T-4a 键位/帮助/视觉打磨**（lazygit 式键位全集、聚焦高亮、错误提示）· 预估：1d
+- [ ] **T-4b 测试**（逻辑层单测：状态/schema 加载/查询编排；tcell `SimulationScreen` 冒烟启动→选表→出结果）· 预估：1d
+- [x] **T-4c 文档**：README 增 `## Terminal UI` 章节（`s9l tui`、面板、完整键位表）+ 特性条目；TESTING.md 增 TUI 测试策略（白盒/SimulationScreen/手动验证清单）· 预估：0.5d · 注：截图/录屏后续
+
+**Phase T 验收**：`s9l tui` 提供连接/树/结果/编辑器/历史/收藏的键盘驱动全屏体验；核心层零改动；CI 绿；TUI 逻辑有单测 + 冒烟，手动验证清单通过。
+
 ---
 
 ## Phase 3 — Backlog（v0.3+，按需，未排期）

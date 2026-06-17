@@ -8,8 +8,8 @@ short command — simple to use, scriptable, and easy to extend to new databases
 
 ## Features
 
-- **One-shot or interactive** — `s9l <conn> -e "SQL"` for scripts, or drop into
-  a REPL with `s9l <conn>`.
+- **Three ways to use it** — one-shot `s9l <conn> -e "SQL"` for scripts, a REPL
+  with `s9l <conn>`, or a full-screen lazygit-style TUI with `s9l tui` (see below).
 - **Named connections** — store connections in `~/.config/s9l/config.yaml` and
   connect with `s9l mydb`. Passwords never live in the config (see below).
 - **Multiple output formats** — `--format table|json|csv|tsv`. Defaults to a
@@ -88,12 +88,40 @@ Manage connections with `s9l conn add|list|rm`.
 | `s9l conn add\|list\|rm` | Manage named connections |
 | `s9l history [--limit N]` | Show recent query history |
 | `s9l saved add\|list\|search\|rm\|run` | Manage and run saved queries |
+| `s9l tui [connection]` | Launch the full-screen TUI |
 | `s9l --version` | Print version |
 
 In the REPL / with `-e`: `\l`, `\dt`, `\d [table]`, `\?`, and `\q` (REPL quit).
 
 Flags: `--format table|json|csv|tsv`, `--max-col-width N` (truncate table cells),
 `--timeout 30s` (abort a slow query). Press `Ctrl-C` to cancel a running query.
+
+## Terminal UI
+
+A full-screen, lazygit-style interface — connections, schema tree, results and a
+SQL editor, all keyboard-driven:
+
+```bash
+s9l tui          # choose a connection inside the UI
+s9l tui mydb     # auto-connect to a named connection
+```
+
+Panels: **Connections** (from your config) · **Schema** (databases → tables) ·
+**Results** · **SQL editor**. Select a table to preview it, or write SQL and run
+it with F5. Queries run asynchronously and can be cancelled with Esc.
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift-Tab` | switch panel |
+| `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
+| `Enter` | connect (Connections) · preview table (Schema) |
+| `F5` | run the SQL editor |
+| `Esc` | cancel a running query |
+| `Ctrl-R` | query history — `Enter` loads an entry into the editor |
+| `Ctrl-F` | saved queries — `Enter` runs the selected one |
+| `Ctrl-S` | save the editor's SQL as a favorite |
+| `?` | help overlay |
+| `q` / `Ctrl-C` | quit |
 
 ## Development
 
