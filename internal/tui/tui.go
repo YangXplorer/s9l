@@ -67,6 +67,8 @@ type App struct {
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
 
+	onResult func() // test hook fired after a query completes (UI goroutine)
+
 	conn       driver.Conn
 	connID     string
 	driverName string
@@ -198,7 +200,7 @@ const helpText = `[::b]s9l TUI[::-]
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
-  Up / Down         navigate within a panel
+  Up / Down · j / k navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
 
@@ -301,11 +303,14 @@ func (a *App) runQuery(sql string) {
 				cerr := classifyErr(err)
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
-				return
+			} else {
+				a.fillResults(res.cols, res.data)
+				a.recordHistory(sql, elapsed, len(res.data), nil)
+				a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
 			}
-			a.fillResults(res.cols, res.data)
-			a.recordHistory(sql, elapsed, len(res.data), nil)
-			a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
+			if a.onResult != nil {
+				a.onResult()
+			}
 		})
 	}()
 }
@@ -585,6 +590,17 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	if a.helpOpen {
 		a.hideHelp()
 		return nil
+	}
+
+	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
+	// editor (where they are text). Applies in panels and in the list overlays.
+	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
+		switch ev.Rune() {
+		case 'j':
+			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
+		case 'k':
+			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
+		}
 	}
 
 	// While the history overlay is open, Esc / Ctrl-R close it; other keys

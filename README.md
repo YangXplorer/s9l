@@ -114,6 +114,7 @@ it with F5. Queries run asynchronously and can be cancelled with Esc.
 |-----|--------|
 | `Tab` / `Shift-Tab` | switch panel |
 | `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
+| `Up`/`Down` · `j`/`k` | navigate within a panel |
 | `Enter` | connect (Connections) · preview table (Schema) |
 | `F5` | run the SQL editor |
 | `Esc` | cancel a running query |
