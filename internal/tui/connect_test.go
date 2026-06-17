@@ -325,6 +325,28 @@ func TestSaveDisabledIsNoop(t *testing.T) {
 	}
 }
 
+func TestVimNavTranslatesToArrows(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.focusPanel(2) // results (not the editor)
+
+	if ev := a.onKey(tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone)); ev == nil || ev.Key() != tcell.KeyDown {
+		t.Fatalf("'j' should translate to Down, got %v", ev)
+	}
+	if ev := a.onKey(tcell.NewEventKey(tcell.KeyRune, 'k', tcell.ModNone)); ev == nil || ev.Key() != tcell.KeyUp {
+		t.Fatalf("'k' should translate to Up, got %v", ev)
+	}
+}
+
+func TestVimNavLiteralInEditor(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.focusPanel(3) // SQL editor — j/k are text
+
+	ev := a.onKey(tcell.NewEventKey(tcell.KeyRune, 'j', tcell.ModNone))
+	if ev == nil || ev.Key() != tcell.KeyRune || ev.Rune() != 'j' {
+		t.Fatalf("'j' should stay literal in the editor, got %v", ev)
+	}
+}
+
 func TestTitleFrom(t *testing.T) {
 	if got := titleFrom("  select\n  1  "); got != "select 1" {
 		t.Errorf("titleFrom collapse = %q", got)

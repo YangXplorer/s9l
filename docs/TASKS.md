@@ -266,7 +266,7 @@
   - 依赖：T-2a · 预估：0.75d · 注：标题/标签编辑、搜索框后续（当前列全部）
 
 ### T-4 打磨 + 测试 + 文档
-- [ ] **T-4a 键位/帮助/视觉打磨**（lazygit 式键位全集、聚焦高亮、错误提示）· 预估：1d
+- [x] **T-4a 键位/帮助/视觉打磨**：新增 vim 式 `j`/`k`→Down/Up 导航(panels+overlays, 编辑器内仍为文本)；聚焦面板黄框高亮、错误红字进 status(既有切片已具备)；help/状态栏更新。白盒 `TestVimNavTranslatesToArrows`/`TestVimNavLiteralInEditor` + 真实 pty 验证。· 预估：1d · 注：g/G 跳顶底、主题/截图后续(T-4b/c+)
 - [ ] **T-4b 测试**（逻辑层单测：状态/schema 加载/查询编排；tcell `SimulationScreen` 冒烟启动→选表→出结果）· 预估：1d
 - [x] **T-4c 文档**：README 增 `## Terminal UI` 章节（`s9l tui`、面板、完整键位表）+ 特性条目；TESTING.md 增 TUI 测试策略（白盒/SimulationScreen/手动验证清单）· 预估：0.5d · 注：截图/录屏后续
 
