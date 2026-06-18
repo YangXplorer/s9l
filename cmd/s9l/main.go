@@ -57,6 +57,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "tui" {
 		return runTUI(args[1:])
 	}
+	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		return printHelp(out)
+	}
 
 	fs := flag.NewFlagSet("s9l", flag.ContinueOnError)
 	fs.SetOutput(errOut)

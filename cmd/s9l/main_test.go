@@ -160,6 +160,21 @@ func TestRunMissingDSN(t *testing.T) {
 	}
 }
 
+func TestRunHelp(t *testing.T) {
+	for _, arg := range []string{"help", "--help", "-h"} {
+		var out strings.Builder
+		if err := run([]string{arg}, noInput(), &out, io.Discard); err != nil {
+			t.Fatalf("run %q: %v", arg, err)
+		}
+		s := out.String()
+		for _, want := range []string{"Usage:", "s9l tui", "s9l conn", "s9l saved", "--format"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("help (%s) missing %q", arg, want)
+			}
+		}
+	}
+}
+
 func TestConnAddWithPasswordUsesKeychain(t *testing.T) {
 	keyring.MockInit() // in-memory keychain; no real OS keychain I/O
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
