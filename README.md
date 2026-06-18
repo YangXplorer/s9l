@@ -108,6 +108,8 @@ Manage connections with `s9l conn add|list|rm`.
 | `s9l --version` | Print version |
 
 In the REPL / with `-e`: `\l`, `\dt`, `\d [table]`, `\?`, and `\q` (REPL quit).
+Press `Tab` in the REPL to complete keywords, table names, and column names
+(including `table.column` and columns of tables named in the current line).
 
 Flags: `--format table|json|csv|tsv`, `--max-col-width N` (truncate table cells),
 `--timeout 30s` (abort a slow query). Press `Ctrl-C` to cancel a running query.

@@ -30,7 +30,7 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 	}
 	defer func() { _ = conn.Close() }()
 
-	lr, closeLR, err := newLineReader(in)
+	lr, closeLR, err := newLineReader(in, newCompleter(ctx, conn))
 	if err != nil {
 		return err
 	}
@@ -51,14 +51,16 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 }
 
 // newLineReader returns a readline-backed reader for an interactive terminal,
-// otherwise a scanner over in (pipes, tests).
-func newLineReader(in io.Reader) (repl.LineReader, func(), error) {
+// otherwise a scanner over in (pipes, tests). completer wires Tab completion on
+// the terminal path; it is ignored for the scanner path.
+func newLineReader(in io.Reader, completer readline.AutoCompleter) (repl.LineReader, func(), error) {
 	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
 		rl, err := readline.NewEx(&readline.Config{
 			Prompt:          replPrompt,
 			InterruptPrompt: "^C",
 			EOFPrompt:       `\q`,
 			Stdin:           f,
+			AutoComplete:    completer,
 		})
 		if err != nil {
 			return nil, func() {}, err
