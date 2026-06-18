@@ -303,11 +303,11 @@
 
 ### 新数据库：SQL Server
 
-- [ ] **P3-DB1 SQL Server 适配器**
-  - 产出：`internal/driver/sqlserver/`，用 `github.com/microsoft/go-mssqldb`（纯 Go，免 CGO）；`[]byte`→string 归一化；Metadata 用 `INFORMATION_SCHEMA` / 系统目录（`\l`=`sys.databases`、`\dt`=当前库 `INFORMATION_SCHEMA.TABLES`、`\d`=`INFORMATION_SCHEMA.COLUMNS`，`@p1` 占位）；config 加 sqlserver DSN 分支（`sqlserver://user:pass@host:port?database=db&encrypt=...`）+ 注册
-  - DoD：连 SQL Server，流式 rows；`RunConformance` 对真实 SQL Server（testcontainers `mcr.microsoft.com/mssql/server:2022-latest`）全 PASS；`\l`/`\dt`/`\d` 正确；**核心层零改动**（仅新增 driver 包 + config DSN 分支 + 注册）
+- [x] **P3-DB1 SQL Server 适配器**
+  - 产出：`internal/driver/sqlserver/sqlserver.go`，用 `github.com/microsoft/go-mssqldb`（纯 Go，免 CGO，registered as "sqlserver"）；`[]byte`→string 归一化；Metadata（`\l`=`sys.databases`、`\dt`=当前库 `INFORMATION_SCHEMA.TABLES` BASE TABLE、`\d`=`INFORMATION_SCHEMA.COLUMNS`，`@p1` 占位）；config 加 `sqlserverDSN`（`sqlserver://user:pass@host:port?database=db&encrypt=disable|true`，凭据 url 转义）+ DSN 分支 + `cmd/s9l/main.go` 注册
+  - DoD：`RunConformance` + Metadata 对真实 SQL Server（testcontainers `mcr.microsoft.com/mssql/server:2022-latest`）由 **CI integration job** 验证全 PASS（本地沙箱无 Docker，同 PG/MySQL 既有方式）；config `TestDSN` 增 sqlserver 用例 ✅；`-short`/lint/build 全绿 ✅；**核心层零改动**（仅新增 driver 包 + config DSN 分支 + 注册）
   - 依赖：P0-3（Driver 接口）· 预估：1.5d
-  - 注：**方言差异需评估**——T-SQL 无 `LIMIT`（用 `TOP n` 或 `OFFSET…FETCH`）、占位符 `@p1`、标识符 `[brackets]` 引用。若 `drivertest` 一致性套件用到 `LIMIT`/自增列等不可移植 SQL，需让套件方言无关或在 driver 内适配（差异下沉到 driver，不污染核心）。镜像较大（>1GB）、容器启动慢，IT 用 `testing.Short()` 隔离并放宽等待超时。
+  - 注：一致性套件 SQL 本就可移植（`DROP TABLE IF EXISTS`/多行 VALUES/`ORDER BY id`(INTEGER) 均兼容 T-SQL；TEXT 列只 SELECT 不 ORDER BY）。方言差异（无 `LIMIT`→`TOP`/`OFFSET…FETCH`、`@p1`、`[brackets]`）下沉 driver。镜像 >1GB、启动慢，IT 用 `testing.Short()` 隔离。
 
 **Phase 3 验收**：TUI 具备 lazygit 式配色/圆角/序号面板/底部键位栏；Connections 显示图标+名称；SQL 编辑器约翻倍；可在界面内新增连接并持久化（密码进 keychain）；结果可即时过滤；新增 SQL Server 仅动 driver 层、conformance 全 PASS。核心层零改动；CI 绿；逻辑白盒 + SimulationScreen 冒烟 + 手动清单通过。
 

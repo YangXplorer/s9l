@@ -28,6 +28,7 @@ import (
 	_ "github.com/YangXplorer/s9l/internal/driver/mysql"
 	_ "github.com/YangXplorer/s9l/internal/driver/postgres"
 	_ "github.com/YangXplorer/s9l/internal/driver/sqlite"
+	_ "github.com/YangXplorer/s9l/internal/driver/sqlserver"
 )
 
 // Injected at build time via -ldflags (see docs/RELEASE.md).

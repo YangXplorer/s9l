@@ -108,6 +108,16 @@ func TestDSN(t *testing.T) {
 		t.Fatalf("mysql DSN = %q", myDSN)
 	}
 
+	// sqlserver builds a sqlserver:// URL with escaped credentials and encrypt.
+	ms := config.ConnectionConfig{ID: "x", Driver: "sqlserver", Host: "db", Port: 1433, User: "sa", Database: "app", SSL: true}
+	msDSN, err := ms.DSN("p@ss")
+	if err != nil {
+		t.Fatalf("sqlserver DSN: %v", err)
+	}
+	if msDSN != "sqlserver://sa:p%40ss@db:1433?database=app&encrypt=true" {
+		t.Fatalf("sqlserver DSN = %q", msDSN)
+	}
+
 	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mongodb"}).DSN(""); err == nil {
 		t.Fatal("unimplemented driver should error")
 	}

@@ -37,6 +37,8 @@ func (c ConnectionConfig) DSN(password string) (string, error) {
 		return c.postgresDSN(password), nil
 	case "mysql":
 		return c.mysqlDSN(password), nil
+	case "sqlserver":
+		return c.sqlserverDSN(password), nil
 	case "":
 		return "", fmt.Errorf("connection %q: missing driver", c.ID)
 	default:
@@ -105,4 +107,39 @@ func (c ConnectionConfig) mysqlDSN(password string) string {
 		q.Set("tls", "true")
 	}
 	return fmt.Sprintf("%s@tcp(%s:%d)/%s?%s", auth, host, port, c.Database, q.Encode())
+}
+
+// sqlserverDSN builds a microsoft/go-mssqldb URL:
+//
+//	sqlserver://user:password@host:port?database=db&encrypt=disable|true
+//
+// SSL toggles encrypt (require vs disable); the database is a query parameter so
+// the connection has a default database for INFORMATION_SCHEMA listings.
+func (c ConnectionConfig) sqlserverDSN(password string) string {
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	if c.Port > 0 {
+		host = host + ":" + strconv.Itoa(c.Port)
+	}
+	u := url.URL{Scheme: "sqlserver", Host: host}
+	if c.User != "" {
+		if password != "" {
+			u.User = url.UserPassword(c.User, password)
+		} else {
+			u.User = url.User(c.User)
+		}
+	}
+	q := url.Values{}
+	if c.Database != "" {
+		q.Set("database", c.Database)
+	}
+	if c.SSL {
+		q.Set("encrypt", "true")
+	} else {
+		q.Set("encrypt", "disable")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
