@@ -292,10 +292,10 @@
   - 产出：`editorHeight` 常量 6 → 12（约一倍，含 tview 2 行边框）；Results/SQL 纵向比例随之调整（results 取剩余）
   - DoD：SQL 面板可见行数约翻倍；80x24 下 4 面板不挤爆（真实 pty 确认全部渲染）✅
   - 依赖：T3-1 · 预估：0.25d
-- [ ] **T3-4 图形化「新增连接」表单**
-  - 产出：`internal/tui/connform.go`——Connections 面板 `n`（或 `Ctrl-N`）打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码) 或 password-ref；提交→校验→`config.Add`+`Save`，有密码则 `secret.Default().Set`（写 keychain，配置仅存 ref）→刷新 Connections 列表；`Esc` 取消；错误进表单/状态栏
-  - DoD：表单填写→保存→出现在 Connections 且写入 config.yaml（白盒：表单值→保存→`config.Load` 校验、密码进 keychain 用 go-keyring `MockInit` 验 ref 与解析）；重复 id/缺必填 报错不崩；`Esc` 无副作用；真实 pty `n`→填→保存→可见
-  - 依赖：T3-1 · 预估：1.5d · 注：复用 `config`/`secret`，核心零改动；编辑/删除连接可后续
+- [x] **T3-4 图形化「新增连接」表单**
+  - 产出：`internal/tui/connform.go`——Connections 面板 `n` 打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码)/password-ref；`submitConnForm` 读表单→`saveConnection`：校验(id/driver 必填、sqlite 需 database、port 数字)→`cfg.Add`(唯一 id)→有密码则 `store.Set`(写 keychain，配置仅存 `KeychainRef`)→`cfg.Save`→`populateConnections` 刷新；写失败回滚 Add/secret；`Esc`/Cancel 取消；错误进状态栏。onKey 增 connFormOpen 分支(置于 vim-nav 前，表单输入字面透传)；keybar/help 增 `n`，空列表提示改回 "press n to add"
+  - DoD：`saveConnection` 校验三分支 + 持久化(`config.Load` 往返断言) + 重复 id 报错 + 密码进 keychain(go-keyring `MockInit`，仅存 ref、`secret.Resolve` 回解) + 列表刷新 白盒(`connform_test.go`)✅；真实 pty `n`→表单(New connection/Driver/Password)→Esc 退出 exit 0 ✅；核心零改动
+  - 依赖：T3-1 · 预估：1.5d · 注：复用 `config`/`secret`；编辑/删除连接见 Backlog B-6
 - [x] **T3-5 结果过滤器**
   - 产出：App 保存上次结果集(`lastCols`/`lastData`)，结果经 `setResults` 统一存+渲染并清空过滤；`filterRows(data, term)` 纯函数(子串、大小写不敏感、跨列、NULL→"NULL" 参与匹配、空 term 返回全量)；`/` 打开过滤输入浮层(`tview.InputField`，`SetChangedFunc` 实时 `applyFilter`)，Enter 保留、Esc 清空并关闭(`hideFilter`)；状态栏 `filtered M/N`/清空时 `%d rows`；onKey 在 filterOpen 时优先处理(置于 vim j/k 之前，避免把输入 j/k 转成方向键)；keybar/help 增 `/`
   - DoD：`filterRows` 大小写/跨列/NULL/空 term 白盒 + `applyFilter` 行数断言(header+匹配) + 无结果时不开浮层 `TestShowFilterNoResults` ✅；真实 pty keybar/help 显示 `/ filter` ✅

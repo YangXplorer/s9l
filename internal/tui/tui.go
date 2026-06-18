@@ -66,11 +66,12 @@ type App struct {
 
 	theme Theme
 
-	focusIdx    int
-	helpOpen    bool
-	historyOpen bool
-	savedOpen   bool
-	filterOpen  bool
+	focusIdx     int
+	helpOpen     bool
+	historyOpen  bool
+	savedOpen    bool
+	filterOpen   bool
+	connFormOpen bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -196,8 +197,8 @@ func (a *App) keyBar() string {
 	open := a.theme.tag(a.theme.Accent) + "[::b]"
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
-		{"Tab", "panel"}, {"F5", "run"}, {"/", "filter"}, {"^R", "history"},
-		{"^F", "saved"}, {"^S", "save"}, {"?", "help"}, {"q", "quit"},
+		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
+		{"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
 	for i, e := range keys {
@@ -212,7 +213,7 @@ func (a *App) keyBar() string {
 func (a *App) showHelp() {
 	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
 	help.SetBorder(true).SetTitle(" Help ")
-	a.pages.AddPage("help", centered(help, 46, 16), true, true)
+	a.pages.AddPage("help", centered(help, 46, 17), true, true)
 	a.helpOpen = true
 }
 
@@ -239,6 +240,7 @@ const helpText = `[::b]s9l TUI[::-]
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
+  n                 new connection
   F5                run SQL editor
   /                 filter results
   Ctrl-R            query history (Enter loads it)
@@ -260,7 +262,7 @@ func (a *App) populateConnections() {
 		})
 	}
 	if a.connList.GetItemCount() == 0 {
-		a.connList.AddItem("(no connections — run: s9l conn add)", "", 0, nil)
+		a.connList.AddItem("(no connections — press n to add)", "", 0, nil)
 	}
 }
 
@@ -720,6 +722,17 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the new-connection form is open, Esc cancels; everything else is
+	// handled by the form (field navigation, typing). Before vim-nav so typing
+	// stays literal.
+	if a.connFormOpen {
+		if ev.Key() == tcell.KeyEscape {
+			a.hideConnForm()
+			return nil
+		}
+		return ev
+	}
+
 	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
 	// editor (where they are text). Applies in panels and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
@@ -807,6 +820,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			return nil
 		case '/':
 			a.showFilter()
+			return nil
+		case 'n':
+			a.showConnForm()
 			return nil
 		}
 	}
