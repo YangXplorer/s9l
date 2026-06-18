@@ -280,9 +280,9 @@
 
 ### TUI 强化（lazygit 风格打磨）
 
-- [ ] **T3-1 主题与 lazygit 式视觉/布局**
-  - 产出：`internal/tui/theme.go` 集中配色（focus/accent/select/border/dim 常量）；圆角边框（`tview.Borders` 配置）；面板标题带序号 `[1] Connections`…`[4] SQL`（与 `1/2/3/4` 跳转键一致）；聚焦面板高亮边框、非聚焦淡色；底部 lazygit 式「键位提示栏」（与状态行分离：状态行 + 键位行两行）；尊重 `NO_COLOR`
-  - DoD：聚焦面板边框高亮、标题带序号；底部键位栏列出上下文键；`NO_COLOR` 下不崩、可读；白盒（焦点切换→边框色变化）+ 真实 pty 截图核对
+- [x] **T3-1 主题与 lazygit 式视觉/布局**
+  - 产出：`internal/tui/theme.go`——`Theme`(focus/border/title/accent/dim/error/selection)、`newTheme()` 尊重 `NO_COLOR`(全角色塌缩为终端默认、`tag/reset` 返回空)、`useRoundedBorders()` 全局圆角(`tview.Borders` 角 + focus 变体单线由颜色标记)；面板标题带序号 `[1] Connections`…`[4] SQL (F5 run)` + 标题色；聚焦面板绿边框/非聚焦灰(`theme.border`)；选中行高亮(NO_COLOR 时回退 tview 默认)；底部拆为两行——状态行(动态消息/错误经 `theme` 着色) + 静态 lazygit 式键位栏(`keyBar()`)；`editorHeight` 常量化(T3-3 用)
+  - DoD：聚焦面板边框高亮、标题带序号；底部键位栏列出上下文键；`NO_COLOR` 下不崩、不输出色标 ✅；白盒 `theme_test.go`(border/NO_COLOR/tag/focusPanel 边框色/keyBar) + 真实 pty 核对(序号标题/键位栏/圆角 ╭╰ 渲染) ✅；核心层零改动
   - 依赖：Phase T · 预估：2d
 - [ ] **T3-2 Connections 仅名称 + 数据库图标**
   - 产出：`connIcon(driver)` 图标映射（postgres/mysql/sqlite/sqlserver，Nerd Font 字形 + ASCII 回退 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=0` 可关）；List 主文本改为 `<icon> <name|id>`，host/db 等细节移到淡色副行或去除
