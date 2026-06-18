@@ -284,13 +284,13 @@
   - 产出：`internal/tui/theme.go`——`Theme`(focus/border/title/accent/dim/error/selection)、`newTheme()` 尊重 `NO_COLOR`(全角色塌缩为终端默认、`tag/reset` 返回空)、`useRoundedBorders()` 全局圆角(`tview.Borders` 角 + focus 变体单线由颜色标记)；面板标题带序号 `[1] Connections`…`[4] SQL (F5 run)` + 标题色；聚焦面板绿边框/非聚焦灰(`theme.border`)；选中行高亮(NO_COLOR 时回退 tview 默认)；底部拆为两行——状态行(动态消息/错误经 `theme` 着色) + 静态 lazygit 式键位栏(`keyBar()`)；`editorHeight` 常量化(T3-3 用)
   - DoD：聚焦面板边框高亮、标题带序号；底部键位栏列出上下文键；`NO_COLOR` 下不崩、不输出色标 ✅；白盒 `theme_test.go`(border/NO_COLOR/tag/focusPanel 边框色/keyBar) + 真实 pty 核对(序号标题/键位栏/圆角 ╭╰ 渲染) ✅；核心层零改动
   - 依赖：Phase T · 预估：2d
-- [ ] **T3-2 Connections 仅名称 + 数据库图标**
-  - 产出：`connIcon(driver)` 图标映射（postgres/mysql/sqlite/sqlserver，Nerd Font 字形 + ASCII 回退 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=0` 可关）；List 主文本改为 `<icon> <name|id>`，host/db 等细节移到淡色副行或去除
-  - DoD：列表每行 `图标 + 名称`；无 Nerd Font 时回退不乱码/不错位；白盒 `connIcon` + 列表填充测试
+- [x] **T3-2 Connections 仅名称 + 数据库图标**
+  - 产出：`internal/tui/connlist.go`——`connIcon(driver)`（默认 ASCII 标签 `[pg]/[my]/[sq]/[ms]`，**始终渲染对齐**；`S9L_TUI_ICONS=nerd` 用 Nerd Font devicon 字形(`` 等 + 通用 `` 回退)；`=off/none/0` 关闭）；`connDisplayName`(有 name 用 name 否则 id)；`iconMode()`；List 改 `ShowSecondaryText(false)`、主文本 `<icon> <name>`，去掉冗长的 `driver user@host/db` 副行
+  - DoD：列表每行 `图标 + 名称`（白盒 `TestConnListShowsIconAndName` 经 `GetItemText` 断言 `[pg] Dev Postgres`）✅；ascii/off/nerd 三模式 + 未知驱动回退 白盒 ✅；默认 ASCII 不依赖字体、对齐稳定；真实 pty 4 面板正常
   - 依赖：T3-1 · 预估：0.5d
-- [ ] **T3-3 SQL 编辑器面积翻倍**
-  - 产出：编辑器固定高 6 → 12（约一倍）；Results/SQL 纵向比例调整；可见行数常量化（便于将来配置）；小终端最小高度回退
-  - DoD：SQL 面板可见行数约翻倍；小窗口不挤爆布局；真实 pty 目视确认
+- [x] **T3-3 SQL 编辑器面积翻倍**
+  - 产出：`editorHeight` 常量 6 → 12（约一倍，含 tview 2 行边框）；Results/SQL 纵向比例随之调整（results 取剩余）
+  - DoD：SQL 面板可见行数约翻倍；80x24 下 4 面板不挤爆（真实 pty 确认全部渲染）✅
   - 依赖：T3-1 · 预估：0.25d
 - [ ] **T3-4 图形化「新增连接」表单**
   - 产出：`internal/tui/connform.go`——Connections 面板 `n`（或 `Ctrl-N`）打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码) 或 password-ref；提交→校验→`config.Add`+`Save`，有密码则 `secret.Default().Set`（写 keychain，配置仅存 ref）→刷新 Connections 列表；`Esc` 取消；错误进表单/状态栏

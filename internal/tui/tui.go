@@ -29,8 +29,10 @@ const (
 	// resultLimit caps rows fetched when browsing a table (full control via the
 	// SQL editor lands in T-2a).
 	resultLimit = 200
-	// editorHeight is the SQL editor's fixed height in rows (T3-3 enlarges it).
-	editorHeight = 6
+	// editorHeight is the SQL editor's fixed height in rows. tview gives the
+	// panel a 2-row border, so this is ~10 editable lines — roughly double the
+	// original 6 so multi-line statements have room.
+	editorHeight = 12
 )
 
 // Options configures the TUI.
@@ -116,7 +118,7 @@ func New(opts Options) *App {
 }
 
 func (a *App) buildLayout() {
-	a.connList = tview.NewList().ShowSecondaryText(true)
+	a.connList = tview.NewList().ShowSecondaryText(false)
 	a.titledPanel(a.connList.Box, "[1] Connections")
 
 	a.schema = tview.NewTreeView()
@@ -241,16 +243,17 @@ const helpText = `[::b]s9l TUI[::-]
 
   [::d]press any key to close[::-]`
 
-// populateConnections fills the list from config; Enter connects.
+// populateConnections fills the list from config; Enter connects. Each row is a
+// single line: a database-type icon plus the connection's display name.
 func (a *App) populateConnections() {
 	a.connList.Clear()
 	for _, cc := range a.cfg.Connections {
-		a.connList.AddItem(cc.ID, connSummary(cc), 0, func() {
+		a.connList.AddItem(connIcon(cc.Driver)+connDisplayName(cc), "", 0, func() {
 			_ = a.connect(cc)
 		})
 	}
 	if a.connList.GetItemCount() == 0 {
-		a.connList.AddItem("(no connections)", "add one with: s9l conn add", 0, nil)
+		a.connList.AddItem("(no connections — run: s9l conn add)", "", 0, nil)
 	}
 }
 
@@ -754,13 +757,6 @@ func (a *App) closeConn() {
 		_ = a.conn.Close()
 		a.conn = nil
 	}
-}
-
-func connSummary(cc config.ConnectionConfig) string {
-	if cc.Driver == "sqlite" {
-		return "sqlite " + cc.Database
-	}
-	return fmt.Sprintf("%s %s@%s:%d/%s", cc.Driver, cc.User, cc.Host, cc.Port, cc.Database)
 }
 
 // --- testing seams ---
