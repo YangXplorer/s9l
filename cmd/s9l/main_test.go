@@ -167,7 +167,7 @@ func TestRunHelp(t *testing.T) {
 			t.Fatalf("run %q: %v", arg, err)
 		}
 		s := out.String()
-		for _, want := range []string{"Usage:", "s9l tui", "s9l conn", "s9l saved", "--format"} {
+		for _, want := range []string{"Usage:", "s9l tui", "s9l conn", "s9l saved", "--format", "--no-pager"} {
 			if !strings.Contains(s, want) {
 				t.Errorf("help (%s) missing %q", arg, want)
 			}

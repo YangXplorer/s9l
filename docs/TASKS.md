@@ -198,7 +198,7 @@
 
 - [x] **P2-1 MySQL 适配器**（`go-sql-driver/mysql`，纯 Go）— DoD：仅新增 `internal/driver/mysql/` + config mysql DSN 分支 + 注册，核心零改动 ✅；Metadata 用 information_schema（`?` 占位）✅；testcontainers(mysql:8.4) conformance+metadata 全 PASS ✅ · 预估：1d
 - [x] **P2-2 自动补全**：REPL 内 `Tab` 补全 SQL 关键字 / 表名 / 列名。`internal/repl/complete.go` 终端无关核心(`Completer`+`Schema` 接口)：词前缀匹配、`\` 元命令、`table.column` 限定补全、当前语句中引用到的表自动纳入其列；`cmd/s9l/complete.go` `schemaCache`(基于 `driver.Metadata` 懒加载缓存表/列，含 nil 容错) + `readline.AutoCompleter` 适配器，仅 TTY 路径启用。白盒 `complete_test.go`(repl 核心 6 例 + cmd schemaCache 实 SQLite E2E)。核心 driver 层零改动。· 预估：2d
-- [ ] **P2-3 结果分页/翻页**（大结果交互式翻页或 pager 集成）· 预估：1d
+- [x] **P2-3 结果分页/翻页**：TTY 输出经 `$PAGER` 分页(默认 `less -FIRX`，单屏内直接打印)。`cmd/s9l/pager.go`：`pagerArgs`(S9L_PAGER 覆盖 PAGER、空值禁用、默认 less)、`maybePager`(仅 *os.File 终端启用，返回 pipe+finish，否则原样直通)、`isBrokenPipe`(用户提前退出 pager 的 EPIPE 视为正常)。`runStatementPaged` 包裹 `-e`/REPL/`saved run` 渲染；`--no-pager` flag 禁用。非 TTY(管道/脚本/测试)绝不分页。白盒 `pager_test.go`(参数解析 7 例 + 非 TTY 直通 + 禁用 + EPIPE)。核心 driver 层零改动。· 预估：1d
 - [x] **P2-4 错误信息与帮助打磨**：`cmd/s9l/help.go` 顶层 `s9l help`/`-h`/`--help` 概览(用法/子命令 conn·history·saved·tui/查询 flags/凭据说明)；`\?` 帮助在 REPL/TUI 既有。错误已带 driver/上下文(既有)。白盒 `TestRunHelp`。· 预估：0.5d
 - [x] **P2-5 query_folders 收藏分组**：`query_folders` 表(name UNIQUE) + `saved_queries.folder_id`(幂等 `ALTER TABLE ADD COLUMN`)；Store `CreateFolder`/`ListFolders`/`DeleteFolder`(删文件夹时把内含查询 `folder_id` 置空、不删查询)/`SetSavedFolder`/`ListSavedByFolder`(0=未归档)；CLI `s9l saved folder add|rm`、`saved folders`、`saved add --folder N`、`saved list --folder N`、`saved mv <id> --folder N`。白盒 `TestFolderCRUDAndAssignment`/`TestDeleteFolderUnfilesQueries` + CLI `TestSavedFolders`。核心零改动。· 预估：0.5d
 - [x] **P2-6 系统 Keychain（SecretStore.keychain 实现）**
