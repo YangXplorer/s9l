@@ -23,6 +23,10 @@ short command — simple to use, scriptable, and easy to extend to new databases
 ## Install
 
 ```bash
+# Homebrew (macOS / Linux)
+brew install YangXplorer/tap/s9l
+
+# Go
 go install github.com/YangXplorer/s9l/cmd/s9l@latest
 ```
 
