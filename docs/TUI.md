@@ -101,3 +101,51 @@
 | 大结果卡 UI | 默认 LIMIT + 分页/虚拟滚动，查询可 `Esc` 取消 |
 | 自动化测试覆盖弱 | 逻辑层单测 + SimulationScreen 冒烟 + 手动验证清单 |
 | 与 CLI/REPL 行为漂移 | 复用同一 driver/config/secret/history，避免逻辑分叉 |
+
+---
+
+## TUI 强化（Phase 3，目标 v0.6）
+
+Phase T 已交付可用的全屏 TUI；本阶段在其上做 **lazygit 风格的视觉/布局打磨与三个体验增强**。原则不变：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
+
+### 目标布局（强化后）
+
+```
+┌─[1] Connections ─┐┌─[3] Results ─────────────────────────┐
+│  pg               ││ id │ name  │ email      │ age       │   ← 仅图标+名称
+│  my               ││ 1  │ alice │ a@x.io     │ 30        │
+│  demo             ││ 2  │ bob   │ NULL       │ 25        │
+├─[2] Schema ───────┤│ /filter: ali ───────── filtered 1/2 │   ← 结果过滤器
+│ ▾ app             ││                                      │
+│   users           │└──────────────────────────────────────┘
+│   orders          │┌─[4] SQL (F5 run) ────────────────────┐
+│                   ││ select * from users                  │
+│                   ││ where age > 18                       │   ← 编辑器约翻倍
+│                   ││ order by created_at desc             │
+│                   ││ limit 200;                           │
+└───────────────────┘└──────────────────────────────────────┘
+ pg · app.users · 200 rows · 12ms                              ← 状态行
+ [Tab] panel  [n] new conn  [/] filter  [F5] run  [?] help  [q] quit   ← 键位栏
+```
+
+要点（对应用户 5 项需求）：
+
+1. **配色与布局（lazygit 风格）**——集中式主题 `theme.go`：聚焦面板高亮边框（绿/青）、非聚焦淡色、圆角边框（`tview.Borders`）、面板标题带序号 `[1] Connections`（与 `1/2/3/4` 跳转键一致）、底部独立「键位提示栏」（与状态行分离）。尊重 `NO_COLOR`。
+2. **Connections 仅名称 + 图标**——主文本 `<icon> <name|id>`，按驱动给数据库图标（Nerd Font 字形 + ASCII 回退 `[pg]/[my]/[sq]`，可关）；host/db 等细节移到淡色副行或去除。
+3. **SQL 编辑器面积翻倍**——固定高 6 → 12（小窗口有回退），Results/SQL 纵向比例相应调整。
+4. **界面内「新增连接」表单**——Connections 面板 `n` 打开 `tview.Form`（id/name/driver 下拉/host/port/user/database/ssl/password 或 password-ref），提交→`config.Add`+`Save`，有密码则写系统 keychain（配置仅存 ref）→刷新列表；`Esc` 取消。复用 `config`/`secret`，核心零改动。
+5. **结果过滤器**——App 持有上次结果集（列+行），`/` 打开过滤框，按子串（大小写不敏感、跨列）客户端实时过滤并重渲染，状态显示 `filtered M/N`，`Esc` 关闭/清空。
+
+### 新增键位
+
+| 键 | 作用 | 适用面板 |
+|----|------|----------|
+| `n`（或 `Ctrl-N`） | 打开「新增连接」表单 | Connections |
+| `/` | 打开结果过滤框 | Results |
+| `Esc` | 取消查询 / 关闭浮层·过滤·表单 | 全局 |
+
+### 强化阶段测试策略
+- **纯函数优先**：`connIcon(driver)`、`filterRows(cols, rows, term)`、表单值→`ConnectionConfig` 映射等抽成可单测纯函数。
+- **持久化校验**：新增连接表单走 `config.Load` 往返断言；密码进 keychain（go-keyring `MockInit`）只验 ref 与解析，不碰真实 OS keychain。
+- **SimulationScreen 冒烟**：聚焦切换边框色、`n` 开表单、`/` 过滤路径。
+- **手动清单**：真实终端核对配色/圆角/图标/键位栏（视觉项无法完全自动化，明确为手动验证）。

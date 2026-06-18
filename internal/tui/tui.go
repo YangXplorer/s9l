@@ -29,6 +29,10 @@ const (
 	// resultLimit caps rows fetched when browsing a table (full control via the
 	// SQL editor lands in T-2a).
 	resultLimit = 200
+	// editorHeight is the SQL editor's fixed height in rows. tview gives the
+	// panel a 2-row border, so this is ~10 editable lines — roughly double the
+	// original 6 so multi-line statements have room.
+	editorHeight = 12
 )
 
 // Options configures the TUI.
@@ -58,11 +62,21 @@ type App struct {
 	results  *tview.Table
 	editor   *tview.TextArea
 	status   *tview.TextView
+	keybar   *tview.TextView
 
-	focusIdx    int
-	helpOpen    bool
-	historyOpen bool
-	savedOpen   bool
+	theme Theme
+
+	focusIdx     int
+	helpOpen     bool
+	historyOpen  bool
+	savedOpen    bool
+	filterOpen   bool
+	connFormOpen bool
+
+	// last result set, retained so the Results filter can re-render client-side.
+	lastCols []string
+	lastData [][]any
+	filter   string
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -95,6 +109,8 @@ func New(opts Options) *App {
 		a.store = secret.NewMemory()
 	}
 
+	a.theme = newTheme()
+	useRoundedBorders()
 	a.buildLayout()
 	a.populateConnections()
 
@@ -109,39 +125,56 @@ func New(opts Options) *App {
 }
 
 func (a *App) buildLayout() {
-	a.connList = tview.NewList().ShowSecondaryText(true)
-	a.connList.SetBorder(true).SetTitle(" Connections ")
+	a.connList = tview.NewList().ShowSecondaryText(false)
+	a.titledPanel(a.connList.Box, "[1] Connections")
 
 	a.schema = tview.NewTreeView()
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
-	a.schema.SetBorder(true).SetTitle(" Schema ")
+	a.titledPanel(a.schema.Box, "[2] Schema")
 
 	a.results = tview.NewTable().SetBorders(false).SetFixed(1, 0)
 	a.results.SetSelectable(true, false)
-	a.results.SetBorder(true).SetTitle(" Results ")
+	a.titledPanel(a.results.Box, "[3] Results")
 
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
-	a.editor.SetBorder(true).SetTitle(" SQL (F5 run) ")
+	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
+
+	// Selected-row highlight (skipped under NO_COLOR so tview's default reverse
+	// styling keeps the selection visible on monochrome terminals).
+	if !noColor() {
+		a.connList.SetSelectedBackgroundColor(a.theme.Selection).SetSelectedTextColor(tcell.ColorBlack)
+		a.results.SetSelectedStyle(tcell.StyleDefault.Background(a.theme.Selection).Foreground(tcell.ColorBlack))
+	}
 
 	a.status = tview.NewTextView().SetDynamicColors(true)
 	a.SetStatus(defaultStatus)
+
+	// keybar is the static, always-visible lazygit-style shortcut line.
+	a.keybar = tview.NewTextView().SetDynamicColors(true)
+	a.keybar.SetText(" " + a.keyBar())
 
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.connList, 0, 1, true).
 		AddItem(a.schema, 0, 1, false)
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.results, 0, 1, false).
-		AddItem(a.editor, 6, 0, false)
+		AddItem(a.editor, editorHeight, 0, false)
 	body := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(left, sidebarWidth, 0, true).
 		AddItem(right, 0, 1, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(body, 0, 1, true).
-		AddItem(a.status, 1, 0, false)
+		AddItem(a.status, 1, 0, false).
+		AddItem(a.keybar, 1, 0, false)
 
 	a.pages = tview.NewPages().AddPage("main", root, true, true)
 	a.app.SetRoot(a.pages, true).EnableMouse(true)
 	a.focusPanel(0)
+}
+
+// titledPanel applies the bordered, titled look shared by every panel.
+func (a *App) titledPanel(b *tview.Box, title string) {
+	b.SetBorder(true).SetTitle(" " + title + " ").SetTitleColor(a.theme.Title)
 }
 
 // navPanels are the focusable panels cycled by Tab / 1-4.
@@ -153,23 +186,34 @@ func (a *App) navPanels() []tview.Primitive {
 func (a *App) focusPanel(i int) {
 	a.focusIdx = i
 	a.app.SetFocus(a.navPanels()[i])
-	a.connList.SetBorderColor(borderColor(i == 0))
-	a.schema.SetBorderColor(borderColor(i == 1))
-	a.results.SetBorderColor(borderColor(i == 2))
-	a.editor.SetBorderColor(borderColor(i == 3))
+	a.connList.SetBorderColor(a.theme.border(i == 0))
+	a.schema.SetBorderColor(a.theme.border(i == 1))
+	a.results.SetBorderColor(a.theme.border(i == 2))
+	a.editor.SetBorderColor(a.theme.border(i == 3))
 }
 
-func borderColor(focused bool) tcell.Color {
-	if focused {
-		return tcell.ColorYellow
+// keyBar renders the static bottom shortcut line with accent-colored keys.
+func (a *App) keyBar() string {
+	open := a.theme.tag(a.theme.Accent) + "[::b]"
+	closing := "[::-]" + a.theme.reset()
+	keys := []struct{ key, label string }{
+		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
+		{"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
-	return tcell.ColorWhite
+	var b strings.Builder
+	for i, e := range keys {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(open + e.key + closing + " " + e.label)
+	}
+	return b.String()
 }
 
 func (a *App) showHelp() {
 	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
 	help.SetBorder(true).SetTitle(" Help ")
-	a.pages.AddPage("help", centered(help, 46, 12), true, true)
+	a.pages.AddPage("help", centered(help, 46, 17), true, true)
 	a.helpOpen = true
 }
 
@@ -196,7 +240,9 @@ const helpText = `[::b]s9l TUI[::-]
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
+  n                 new connection
   F5                run SQL editor
+  /                 filter results
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
@@ -206,16 +252,17 @@ const helpText = `[::b]s9l TUI[::-]
 
   [::d]press any key to close[::-]`
 
-// populateConnections fills the list from config; Enter connects.
+// populateConnections fills the list from config; Enter connects. Each row is a
+// single line: a database-type icon plus the connection's display name.
 func (a *App) populateConnections() {
 	a.connList.Clear()
 	for _, cc := range a.cfg.Connections {
-		a.connList.AddItem(cc.ID, connSummary(cc), 0, func() {
+		a.connList.AddItem(connIcon(cc.Driver)+connDisplayName(cc), "", 0, func() {
 			_ = a.connect(cc)
 		})
 	}
 	if a.connList.GetItemCount() == 0 {
-		a.connList.AddItem("(no connections)", "add one with: s9l conn add", 0, nil)
+		a.connList.AddItem("(no connections — press n to add)", "", 0, nil)
 	}
 }
 
@@ -244,7 +291,7 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	a.conn = conn
 	a.connID = cc.ID
 	a.driverName = cc.Driver
-	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)   %s", cc.ID, cc.Driver, defaultStatus))
+	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)", cc.ID, cc.Driver))
 	a.loadSchema()
 	return nil
 }
@@ -304,9 +351,9 @@ func (a *App) runQuery(sql string) {
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
 			} else {
-				a.fillResults(res.cols, res.data)
+				a.setResults(res.cols, res.data)
 				a.recordHistory(sql, elapsed, len(res.data), nil)
-				a.SetStatus(fmt.Sprintf("%d rows · %s   %s", len(res.data), elapsed.Round(time.Millisecond), defaultStatus))
+				a.SetStatus(fmt.Sprintf("%d rows · %s", len(res.data), elapsed.Round(time.Millisecond)))
 			}
 			if a.onResult != nil {
 				a.onResult()
@@ -362,7 +409,7 @@ func (a *App) recordHistory(sql string, dur time.Duration, rows int, qerr error)
 // editor. Ctrl-R / Esc close it.
 func (a *App) showHistory() {
 	if a.hist == nil {
-		a.SetStatus("history unavailable   " + defaultStatus)
+		a.SetStatus("history unavailable")
 		return
 	}
 	entries, err := a.hist.ListHistory(context.Background(), 100)
@@ -414,12 +461,12 @@ func oneLine(s string) string {
 // derived from the SQL; editing the title is a later enhancement.
 func (a *App) saveCurrent() {
 	if a.hist == nil {
-		a.SetStatus("history unavailable   " + defaultStatus)
+		a.SetStatus("history unavailable")
 		return
 	}
 	sql := strings.TrimSpace(a.editor.GetText())
 	if sql == "" {
-		a.SetStatus("nothing to save: SQL editor is empty   " + defaultStatus)
+		a.SetStatus("nothing to save: SQL editor is empty")
 		return
 	}
 	id, err := a.hist.SaveQuery(context.Background(), history.SavedQuery{
@@ -431,14 +478,14 @@ func (a *App) saveCurrent() {
 		a.setError("save: " + err.Error())
 		return
 	}
-	a.SetStatus(fmt.Sprintf("saved query #%d   %s", id, defaultStatus))
+	a.SetStatus(fmt.Sprintf("saved query #%d", id))
 }
 
 // showSaved opens an overlay of saved queries (Ctrl-F); Enter runs one.
 // Ctrl-F / Esc close it.
 func (a *App) showSaved() {
 	if a.hist == nil {
-		a.SetStatus("history unavailable   " + defaultStatus)
+		a.SetStatus("history unavailable")
 		return
 	}
 	items, err := a.hist.ListSaved(context.Background())
@@ -487,6 +534,74 @@ func titleFrom(sql string) string {
 		return string(r[:50])
 	}
 	return string(r)
+}
+
+// setResults stores a fresh result set (clearing any active filter) and renders
+// it. The retained copy lets the filter re-render client-side without re-querying.
+func (a *App) setResults(cols []string, data [][]any) {
+	a.lastCols = cols
+	a.lastData = data
+	a.filter = ""
+	a.fillResults(cols, data)
+}
+
+// filterRows keeps the rows where any cell contains term (case-insensitive). An
+// empty term returns data unchanged.
+func filterRows(data [][]any, term string) [][]any {
+	if term == "" {
+		return data
+	}
+	lower := strings.ToLower(term)
+	out := make([][]any, 0, len(data))
+	for _, row := range data {
+		for _, cell := range row {
+			if strings.Contains(strings.ToLower(cellString(cell)), lower) {
+				out = append(out, row)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// applyFilter re-renders the Results table with rows matching term and reports
+// the match count in the status bar.
+func (a *App) applyFilter(term string) {
+	a.filter = term
+	rows := filterRows(a.lastData, term)
+	a.fillResults(a.lastCols, rows)
+	if term == "" {
+		a.SetStatus(fmt.Sprintf("%d rows", len(a.lastData)))
+	} else {
+		a.SetStatus(fmt.Sprintf("filtered %d/%d", len(rows), len(a.lastData)))
+	}
+}
+
+// showFilter opens the Results filter input (/). Typing filters live; Enter
+// keeps the filter, Esc clears it.
+func (a *App) showFilter() {
+	if len(a.lastData) == 0 {
+		a.SetStatus("no results to filter")
+		return
+	}
+	in := tview.NewInputField().SetLabel(" / ").SetText(a.filter)
+	in.SetChangedFunc(a.applyFilter)
+	in.SetBorder(true).SetTitle(" Filter — Enter: keep · Esc: clear ").
+		SetBorderColor(a.theme.Focus)
+	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
+	a.app.SetFocus(in)
+	a.filterOpen = true
+}
+
+// hideFilter closes the filter overlay. When clear is true the filter is reset
+// and the full result set restored.
+func (a *App) hideFilter(clear bool) {
+	a.pages.RemovePage("filter")
+	a.filterOpen = false
+	if clear {
+		a.applyFilter("")
+	}
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
 }
 
 // fillResults renders columns + rows into the Results table (header fixed).
@@ -592,6 +707,32 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
+	// While the filter input is open, Enter keeps the filter and Esc clears it;
+	// every other key (including j/k) is literal text for the input. Handled
+	// before vim-nav so typing isn't translated to arrows.
+	if a.filterOpen {
+		switch ev.Key() {
+		case tcell.KeyEnter:
+			a.hideFilter(false)
+			return nil
+		case tcell.KeyEscape:
+			a.hideFilter(true)
+			return nil
+		}
+		return ev
+	}
+
+	// While the new-connection form is open, Esc cancels; everything else is
+	// handled by the form (field navigation, typing). Before vim-nav so typing
+	// stays literal.
+	if a.connFormOpen {
+		if ev.Key() == tcell.KeyEscape {
+			a.hideConnForm()
+			return nil
+		}
+		return ev
+	}
+
 	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
 	// editor (where they are text). Applies in panels and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
@@ -677,6 +818,12 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case '1', '2', '3', '4':
 			a.focusPanel(int(ev.Rune() - '1'))
 			return nil
+		case '/':
+			a.showFilter()
+			return nil
+		case 'n':
+			a.showConnForm()
+			return nil
 		}
 	}
 	return ev
@@ -687,18 +834,22 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 func (a *App) runEditor() {
 	sql := strings.TrimSpace(a.editor.GetText())
 	if sql == "" {
-		a.SetStatus("SQL editor is empty   " + defaultStatus)
+		a.SetStatus("SQL editor is empty")
 		return
 	}
 	a.runQuery(sql)
 }
 
-const defaultStatus = "[::b]F5[::-] run  [::b]^R[::-] history  [::b]^F[::-] saved  [::b]^S[::-] save  [::b]?[::-] help  [::b]q[::-] quit"
+// defaultStatus is the idle status-line message; the shortcut keys live in the
+// always-visible keybar below it (see keyBar).
+const defaultStatus = "ready"
 
 // SetStatus updates the bottom status/help bar (supports tview color tags).
 func (a *App) SetStatus(s string) { a.status.SetText(" " + s) }
 
-func (a *App) setError(msg string) { a.SetStatus("[red]" + msg + "[-]") }
+func (a *App) setError(msg string) {
+	a.SetStatus(a.theme.tag(a.theme.Error) + msg + a.theme.reset())
+}
 
 // Run starts the UI loop and blocks until the user quits. The open connection
 // (if any) is closed on exit.
@@ -715,13 +866,6 @@ func (a *App) closeConn() {
 		_ = a.conn.Close()
 		a.conn = nil
 	}
-}
-
-func connSummary(cc config.ConnectionConfig) string {
-	if cc.Driver == "sqlite" {
-		return "sqlite " + cc.Database
-	}
-	return fmt.Sprintf("%s %s@%s:%d/%s", cc.Driver, cc.User, cc.Host, cc.Port, cc.Database)
 }
 
 // --- testing seams ---

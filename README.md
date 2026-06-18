@@ -3,8 +3,8 @@
 A fast terminal database client. Connect to a database and run queries with one
 short command — simple to use, scriptable, and easy to extend to new databases.
 
-> Status: early development (v0.x). SQLite, PostgreSQL and MySQL are supported
-> today; more databases are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
+> Status: early development (v0.x). SQLite, PostgreSQL, MySQL and SQL Server are
+> supported today; more databases are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features
 
@@ -142,13 +142,21 @@ it with F5. Queries run asynchronously and can be cancelled with Esc.
 | `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
 | `Up`/`Down` · `j`/`k` | navigate within a panel |
 | `Enter` | connect (Connections) · preview table (Schema) |
+| `n` | add a new connection (form; password stored in the keychain) |
 | `F5` | run the SQL editor |
-| `Esc` | cancel a running query |
+| `/` | filter the results (substring, any column) |
+| `Esc` | cancel a running query · clear the filter |
 | `Ctrl-R` | query history — `Enter` loads an entry into the editor |
 | `Ctrl-F` | saved queries — `Enter` runs the selected one |
 | `Ctrl-S` | save the editor's SQL as a favorite |
 | `?` | help overlay |
 | `q` / `Ctrl-C` | quit |
+
+The TUI uses a lazygit-style theme (numbered, rounded panels; the focused
+panel is highlighted; a shortcut bar sits at the bottom). Set `NO_COLOR` to
+disable colors. The Connections panel shows a per-database icon next to each
+name; icons default to short ASCII tags (`[pg]`, `[my]`, `[sq]`, `[ms]`) — set
+`S9L_TUI_ICONS=nerd` for Nerd Font glyphs, or `S9L_TUI_ICONS=off` to hide them.
 
 ## Development
 
@@ -158,6 +166,9 @@ go test -short ./...   # unit + in-memory SQLite (no Docker)
 go test ./...          # also runs container-based PostgreSQL tests (needs Docker)
 golangci-lint run
 ```
+
+For a full walkthrough of every command, output format, and the TUI, see the
+**[user manual (docs/MANUAL.md)](docs/MANUAL.md)**.
 
 See [docs/](docs/) for the plan ([PLAN.md](docs/PLAN.md)), task breakdown
 ([TASKS.md](docs/TASKS.md)), testing strategy ([TESTING.md](docs/TESTING.md)),

@@ -274,16 +274,100 @@
 
 ---
 
-## Phase 3 — Backlog（v0.3+，按需，未排期）
+## Phase 3 — TUI 强化 + SQL Server（目标 v0.6）
 
-- **SSH Tunnel**（连接前建隧道）
-- **TLS 配置**（CA/客户端证书、`sslmode` 细化）
-- **AWS RDS IAM Auth**（临时 token 连接）
-- TUI 全屏模式（结果浏览/编辑）
-- 更多数据库：SQL Server / ClickHouse / MongoDB（需评估非关系型对接口的冲击）
-- 运行期插件机制（plugin / wasm）— 仅当编译期抽象不够用时再评估
-- 数据导入导出（CSV/JSON 批量）
-- 历史/收藏的云同步与统计
+预估合计：~2.5–3.5 人周。TUI 五项延续 Phase T 原则：**只改 `internal/tui/`，不动 driver/config/secret/history 核心**；SQL Server 走既有「新增数据库只加一个 driver 包」的扩展模式（同 P2-1 MySQL）。逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。设计详见 [TUI.md](./TUI.md) 「TUI 强化」节。
+
+### TUI 强化（lazygit 风格打磨）
+
+- [x] **T3-1 主题与 lazygit 式视觉/布局**
+  - 产出：`internal/tui/theme.go`——`Theme`(focus/border/title/accent/dim/error/selection)、`newTheme()` 尊重 `NO_COLOR`(全角色塌缩为终端默认、`tag/reset` 返回空)、`useRoundedBorders()` 全局圆角(`tview.Borders` 角 + focus 变体单线由颜色标记)；面板标题带序号 `[1] Connections`…`[4] SQL (F5 run)` + 标题色；聚焦面板绿边框/非聚焦灰(`theme.border`)；选中行高亮(NO_COLOR 时回退 tview 默认)；底部拆为两行——状态行(动态消息/错误经 `theme` 着色) + 静态 lazygit 式键位栏(`keyBar()`)；`editorHeight` 常量化(T3-3 用)
+  - DoD：聚焦面板边框高亮、标题带序号；底部键位栏列出上下文键；`NO_COLOR` 下不崩、不输出色标 ✅；白盒 `theme_test.go`(border/NO_COLOR/tag/focusPanel 边框色/keyBar) + 真实 pty 核对(序号标题/键位栏/圆角 ╭╰ 渲染) ✅；核心层零改动
+  - 依赖：Phase T · 预估：2d
+- [x] **T3-2 Connections 仅名称 + 数据库图标**
+  - 产出：`internal/tui/connlist.go`——`connIcon(driver)`（默认 ASCII 标签 `[pg]/[my]/[sq]/[ms]`，**始终渲染对齐**；`S9L_TUI_ICONS=nerd` 用 Nerd Font devicon 字形(`` 等 + 通用 `` 回退)；`=off/none/0` 关闭）；`connDisplayName`(有 name 用 name 否则 id)；`iconMode()`；List 改 `ShowSecondaryText(false)`、主文本 `<icon> <name>`，去掉冗长的 `driver user@host/db` 副行
+  - DoD：列表每行 `图标 + 名称`（白盒 `TestConnListShowsIconAndName` 经 `GetItemText` 断言 `[pg] Dev Postgres`）✅；ascii/off/nerd 三模式 + 未知驱动回退 白盒 ✅；默认 ASCII 不依赖字体、对齐稳定；真实 pty 4 面板正常
+  - 依赖：T3-1 · 预估：0.5d
+- [x] **T3-3 SQL 编辑器面积翻倍**
+  - 产出：`editorHeight` 常量 6 → 12（约一倍，含 tview 2 行边框）；Results/SQL 纵向比例随之调整（results 取剩余）
+  - DoD：SQL 面板可见行数约翻倍；80x24 下 4 面板不挤爆（真实 pty 确认全部渲染）✅
+  - 依赖：T3-1 · 预估：0.25d
+- [x] **T3-4 图形化「新增连接」表单**
+  - 产出：`internal/tui/connform.go`——Connections 面板 `n` 打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码)/password-ref；`submitConnForm` 读表单→`saveConnection`：校验(id/driver 必填、sqlite 需 database、port 数字)→`cfg.Add`(唯一 id)→有密码则 `store.Set`(写 keychain，配置仅存 `KeychainRef`)→`cfg.Save`→`populateConnections` 刷新；写失败回滚 Add/secret；`Esc`/Cancel 取消；错误进状态栏。onKey 增 connFormOpen 分支(置于 vim-nav 前，表单输入字面透传)；keybar/help 增 `n`，空列表提示改回 "press n to add"
+  - DoD：`saveConnection` 校验三分支 + 持久化(`config.Load` 往返断言) + 重复 id 报错 + 密码进 keychain(go-keyring `MockInit`，仅存 ref、`secret.Resolve` 回解) + 列表刷新 白盒(`connform_test.go`)✅；真实 pty `n`→表单(New connection/Driver/Password)→Esc 退出 exit 0 ✅；核心零改动
+  - 依赖：T3-1 · 预估：1.5d · 注：复用 `config`/`secret`；编辑/删除连接见 Backlog B-6
+- [x] **T3-5 结果过滤器**
+  - 产出：App 保存上次结果集(`lastCols`/`lastData`)，结果经 `setResults` 统一存+渲染并清空过滤；`filterRows(data, term)` 纯函数(子串、大小写不敏感、跨列、NULL→"NULL" 参与匹配、空 term 返回全量)；`/` 打开过滤输入浮层(`tview.InputField`，`SetChangedFunc` 实时 `applyFilter`)，Enter 保留、Esc 清空并关闭(`hideFilter`)；状态栏 `filtered M/N`/清空时 `%d rows`；onKey 在 filterOpen 时优先处理(置于 vim j/k 之前，避免把输入 j/k 转成方向键)；keybar/help 增 `/`
+  - DoD：`filterRows` 大小写/跨列/NULL/空 term 白盒 + `applyFilter` 行数断言(header+匹配) + 无结果时不开浮层 `TestShowFilterNoResults` ✅；真实 pty keybar/help 显示 `/ filter` ✅
+  - 依赖：T-1c（结果表格）· 预估：1d · 注：客户端内存过滤；服务端 WHERE 注入留后续
+
+### 新数据库：SQL Server
+
+- [x] **P3-DB1 SQL Server 适配器**
+  - 产出：`internal/driver/sqlserver/sqlserver.go`，用 `github.com/microsoft/go-mssqldb`（纯 Go，免 CGO，registered as "sqlserver"）；`[]byte`→string 归一化；Metadata（`\l`=`sys.databases`、`\dt`=当前库 `INFORMATION_SCHEMA.TABLES` BASE TABLE、`\d`=`INFORMATION_SCHEMA.COLUMNS`，`@p1` 占位）；config 加 `sqlserverDSN`（`sqlserver://user:pass@host:port?database=db&encrypt=disable|true`，凭据 url 转义）+ DSN 分支 + `cmd/s9l/main.go` 注册
+  - DoD：`RunConformance` + Metadata 对真实 SQL Server（testcontainers `mcr.microsoft.com/mssql/server:2022-latest`）由 **CI integration job** 验证全 PASS（本地沙箱无 Docker，同 PG/MySQL 既有方式）；config `TestDSN` 增 sqlserver 用例 ✅；`-short`/lint/build 全绿 ✅；**核心层零改动**（仅新增 driver 包 + config DSN 分支 + 注册）
+  - 依赖：P0-3（Driver 接口）· 预估：1.5d
+  - 注：一致性套件 SQL 本就可移植（`DROP TABLE IF EXISTS`/多行 VALUES/`ORDER BY id`(INTEGER) 均兼容 T-SQL；TEXT 列只 SELECT 不 ORDER BY）。方言差异（无 `LIMIT`→`TOP`/`OFFSET…FETCH`、`@p1`、`[brackets]`）下沉 driver。镜像 >1GB、启动慢，IT 用 `testing.Short()` 隔离。
+
+**Phase 3 验收**：TUI 具备 lazygit 式配色/圆角/序号面板/底部键位栏；Connections 显示图标+名称；SQL 编辑器约翻倍；可在界面内新增连接并持久化（密码进 keychain）；结果可即时过滤；新增 SQL Server 仅动 driver 层、conformance 全 PASS。核心层零改动；CI 绿；逻辑白盒 + SimulationScreen 冒烟 + 手动清单通过。
+
+---
+
+## Backlog（未排期，按需）
+
+> 已细化「需要修改的内容」便于将来直接领取。标注 **架构影响**：✅=核心零改动（新增包/扩展配置即可）；⚠️=需小幅触碰连接编排或 Metadata 可选接口；🔴=需改核心抽象，开工前先做设计 spike。
+
+- [ ] **B-1 SSH Tunnel（连接前建隧道）** · ⚠️ · 预估 2–3d
+  - 目标：DB 在堡垒机后时，连接前先建 SSH 本地端口转发再连库。
+  - 需要修改：
+    - `internal/config/connection.go`：`ConnectionConfig` 增 `ssh:` 块（`ssh_host/ssh_port/ssh_user/ssh_key_path/ssh_key_ref(passphrase)/ssh_password_ref/known_hosts`）。
+    - 新增 `internal/tunnel/`：基于 `golang.org/x/crypto/ssh`（纯 Go，免 CGO）拨号堡垒机、开本地 listener 转发到远端 `host:port`，返回本地地址 + `Close()`。
+    - 连接编排（`cmd/s9l/main.go:resolveTarget` 与 `internal/tui` connect 路径）：若有 ssh 配置→先起隧道→把 DSN 的 host:port 改写为本地转发地址→`driver.Open`→连接关闭时拆隧道。**driver 接口不变**，仅在"打开连接"这层插入隧道（小幅触碰编排）。
+    - `internal/secret`：SSH 密码/私钥 passphrase 复用 `SecretStore`（`ssh_password_ref`/`ssh_key_ref`）。
+  - 关键考量/风险：**必须校验 known_hosts**（默认不盲信主机密钥）；支持私钥(含 passphrase)/密码/`ssh-agent` 三种认证；隧道生命周期绑定连接；IT 用容器化 sshd + db。
+- [ ] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
+  - 目标：比当前布尔 `ssl` 更细——CA 校验、客户端证书(mTLS)、各驱动 sslmode/tls 模式。
+  - 需要修改：
+    - `internal/config/connection.go`：增 `tls_ca/tls_cert/tls_key/tls_server_name/ssl_mode`（保留 `ssl: true` 向后兼容→等价 `require`）。
+    - DSN 构建：postgres 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql 用 `mysql.RegisterTLSConfig(name, *tls.Config)` 后 DSN 带 `tls=<name>`；sqlserver `encrypt`/`trustServerCertificate`。
+    - 可新增 `internal/config` 内小助手：由文件路径构建 `*tls.Config`。
+  - 关键考量/风险：默认推荐 `verify-full`；mysql 的 RegisterTLSConfig 是全局注册需在 Open 前调用；证书路径错误要清晰报错。
+- [ ] **B-3 AWS RDS IAM Auth（临时 token 连接）** · ⚠️ · 预估 2d
+  - 目标：用 IAM 生成 ~15 分钟临时 token 作为 RDS/Aurora(pg/mysql) 的密码。
+  - 需要修改：
+    - 认证模式：`password_ref` 增方案 `aws-rds-iam`（或连接字段 `auth: rds-iam` + `region`）。
+    - 新增 `internal/awsauth/`：用 AWS SDK Go v2 `feature/rds/auth.BuildAuthToken(ctx, endpoint, region, user, creds)` 在**连接时**生成 token（时效短，不长缓存）。
+    - 连接编排：auth=rds-iam 时即时取 token 当密码，并强制 TLS（RDS IAM 必须）。
+  - 关键考量/风险：**引入 AWS SDK 依赖较重**（纯 Go，不破坏 CGO 约束）；凭据链 env/instance-profile/SSO；token 仅握手时需要（长连接不受 TTL 影响）；真实连接需 AWS 环境→**手动验证**，单测只验 token 装配（fake creds）。
+- [ ] **B-4 ClickHouse 驱动** · ✅ · 预估 1.5d
+  - 目标：新增 ClickHouse（关系型、契合现有接口）。
+  - 需要修改：新增 `internal/driver/clickhouse/`（`github.com/ClickHouse/clickhouse-go/v2` 的 database/sql stdlib，纯 Go）；`[]byte`→string 归一化；Metadata 用 `system.tables`/`system.columns`/`system.databases`；config 加 clickhouse DSN 分支 + 注册。**核心零改动**（同 MySQL/SQL Server 模式）。
+  - 关键考量/风险：方言差异（`LIMIT` OK；类型多）下沉到 driver；testcontainers `clickhouse/clickhouse-server`。
+- [ ] **B-5 MongoDB（评估非关系型对接口的冲击）** · 🔴 · 预估：设计 spike 0.5d，落地大
+  - 目标：评估能否纳入文档型数据库。
+  - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。
+  - 决策点：先 spike 评估接口冲击与价值；很可能**暂不纳入**（s9l 定位 SQL 客户端），或仅做只读文档浏览。**开工前必须设计评审**。
+- [ ] **B-6 TUI 连接编辑/删除** · ✅ · 预估 1d
+  - 需要修改：扩展 Phase 3 的 `internal/tui/connform.go`——编辑(预填现有值)；Connections 面板 `d` 删除(确认浮层)→`config.Remove`+`Save`+`secret.Delete`(keychain 密码)；刷新列表。复用 config/secret，核心零改动。
+- [ ] **B-7 TUI 跨库浏览（库→表 多级树）** · ⚠️ · 预估 1.5d
+  - 目标：Schema 树从「单库表列表」升级为「库→表」多级（解决"未选默认库时看不到表"的痛点）。
+  - 需要修改：`internal/tui` Schema 树先 `Metadata.Databases()` 列库，展开某库再列其表；需要"按指定库列表"能力——给 `driver.Metadata` 增可选方法 `TablesIn(ctx, db)`（或树内跑带 schema 过滤的查询）。pg/mysql/sqlserver 各自实现（差异下沉 driver）。**Metadata 可选接口扩展**（向后兼容：未实现则回退当前库）。
+  - 关键考量：mysql 需 `USE`/限定库名，pg 走 `table_schema`，sqlserver 走三段名；保持向后兼容。
+- [ ] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
+  - 现状：CLI `s9l <conn> -e "..." --format csv > f` 已能导出。
+  - 需要修改：TUI Results 面板加 `e` 导出当前结果集到文件（CSV/JSON，**复用 `internal/render`**）；选路径/格式的小浮层。核心零改动。
+- [ ] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
+  - 目标：把 CSV/JSON 批量导入表。
+  - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
+  - 关键考量/风险：大文件流式读取、类型推断、冲突策略(skip/replace)、参数占位符按方言；IT 用 SQLite。
+- [ ] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
+  - 需要修改：`internal/history` 加聚合查询（按 SQL/连接 GROUP BY：高频查询 Top N、平均耗时、成功率、按连接计数）；`cmd/s9l/history.go` 加 `stats` 子命令渲染。只读本地 `history.db`，核心零改动。
+- [ ] **B-11 历史/收藏云同步** · 🔴 · 预估：设计 needed，大
+  - 目标：把 `history.db`/收藏同步到远端（git 仓库 / S3 / 同步端点）。
+  - 决策点：需选后端 + 认证 + **隐私设计**（历史含 SQL，可能含敏感信息）。建议**暂缓**，优先做 B-10 本地统计；如要做，先出设计与隐私评审。
+- [ ] **B-12 运行期插件机制（plugin / wasm）** · 🔴 · 预估：spike 2–3d，落地大
+  - 目标：运行时加载 driver（Go plugin 或 wasm），而非编译期注册。
+  - 决策点：当前**编译期 `Driver` 注册已满足"新增库只加一个 driver 文件"**目标；运行期插件带来 ABI 稳定性、安全沙箱（建议 `wazero` wasm 而非 Go plugin）等大复杂度与安全面。**仅当编译期抽象不够用时再评估**，先 spike。
 
 ---
 
