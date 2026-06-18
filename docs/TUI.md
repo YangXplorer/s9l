@@ -149,3 +149,44 @@ Phase T 已交付可用的全屏 TUI；本阶段在其上做 **lazygit 风格的
 - **持久化校验**：新增连接表单走 `config.Load` 往返断言；密码进 keychain（go-keyring `MockInit`）只验 ref 与解析，不碰真实 OS keychain。
 - **SimulationScreen 冒烟**：聚焦切换边框色、`n` 开表单、`/` 过滤路径。
 - **手动清单**：真实终端核对配色/圆角/图标/键位栏（视觉项无法完全自动化，明确为手动验证）。
+
+---
+
+## 交互重构（Phase 4，目标 v0.7）
+
+按用户反馈调整层次：**数据库从 Schema 面板上移到 Connections**，Schema 只剩「当前库的表 + 检索」。这取代 Phase 3/B-7 在 Schema 内的库→表树。
+
+### 目标布局（重构后）
+
+```
+┌─[1] Connections ─┐┌─[3] Results ─────────────────────────┐
+│ ▾ [my] neohub     ││ id │ name  │ email                   │
+│     app           ││ …                                    │
+│   ▸ logs          ││                                      │
+│ ▸ [pg] dev        │├──────────────────────────────────────┤
+├─[2] Schema ───────┤│  (results / filter)                  │
+│ /tbl: ord ─────── ││                                      │
+│   orders          │└──────────────────────────────────────┘
+│   order_items     │┌─[4] SQL (F5 run) ────────────────────┐
+│   products        ││ select * from orders                 │
+│                   ││ …                                    │
+└───────────────────┘└──────────────────────────────────────┘
+ my · app · 200 rows · 12ms
+ [Tab] panel  [n] new  [/] filter  [^R] history  [?] help  [q] quit
+```
+
+- **Connections**：树。连接为根（图标+名称，T3-2），`Enter` 连接并展开其**数据库**（懒加载 `Metadata.Databases()`）；选某数据库设为「当前库」并刷新 Schema。`e`/`d` 在连接节点上编辑/删除（B-6）。
+- **Schema**：只列「当前库」的表（`databaseBrowser.TablesIn(currentDB)`，无能力则 `Metadata.Tables()`），支持 `/` 检索（`filterTables` 子串过滤）。选表 `Enter` 预览（`previewQuery`/`qualifyTable` 方言化）。
+- **背景**：`tview.Styles.PrimitiveBackgroundColor=ColorDefault` 等，跟随终端（与 lazygit 一致）。
+
+### 新增键位
+
+| 键 | 作用 | 适用 |
+|----|------|------|
+| `Enter` | 连接节点=连接+展开库 / 数据库节点=设为当前库刷新 Schema | Connections |
+| `/` | 检索当前库的表 | Schema |
+
+### 重构测试策略
+- 纯函数：`filterTables(names, term)`、Connections 树构建（连接→库）、Schema 表列表过滤。
+- fake conn（Metadata + databaseBrowser）驱动 Connections 展开库 / 选库刷新 Schema / 表检索的白盒。
+- 手动清单：真实终端核对背景与 lazygit 一致、库展开、表检索手感。
