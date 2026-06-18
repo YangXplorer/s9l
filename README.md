@@ -150,6 +150,10 @@ it with F5. Queries run asynchronously and can be cancelled with Esc.
 | `?` | help overlay |
 | `q` / `Ctrl-C` | quit |
 
+The TUI uses a lazygit-style theme (numbered, rounded panels; the focused
+panel is highlighted; a shortcut bar sits at the bottom). Set `NO_COLOR` to
+disable colors.
+
 ## Development
 
 ```bash
