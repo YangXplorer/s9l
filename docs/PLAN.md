@@ -107,7 +107,8 @@ type SecretStore interface {
 - **v0.1（≈ MVP / Phase 1）**：config.yaml 连接 + 密码起动时输入（不保存，`SecretStore=memory`）+ SQLite `query_history`/`saved_queries`
 - **v0.2~v0.4（Phase 2）**：系统 Keychain（`SecretStore=keychain`，✅）+ schema cache（✅）+ 补全/分页/收藏分组（✅）
 - **v0.5（Phase T）**：全屏 TUI（lazygit 式，连接/树/结果/编辑器/历史/收藏，✅）
-- **v0.6（≈ Phase 3）**：TUI 强化（lazygit 风格配色/布局、Connections 图标、SQL 编辑器扩大、界面内新增连接、结果过滤器）+ 新增 **SQL Server** 驱动
+- **v0.6（≈ Phase 3）**：TUI 强化（lazygit 风格配色/布局、Connections 图标、SQL 编辑器扩大、界面内新增连接、结果过滤器）+ 新增 **SQL Server** 驱动；v0.6.1 增 TUI 连接编辑/删除 + MySQL 库→表树
+- **v0.7（≈ Phase 4）**：TUI 交互重构——背景与终端/lazygit 一致；Connections 可展开到数据库；Schema 显示当前库表并可检索；使用手册同步
 - **后续 Backlog（未排期）**：SSH Tunnel + TLS 配置 + AWS RDS IAM Auth + 更多数据库
 
 ## 需求拆解
@@ -173,6 +174,9 @@ MySQL(P2-1 ✅) + 补全 + 系统 Keychain + 输出分页 + 错误打磨 + Homeb
 
 ### Phase 3 — TUI 强化 + SQL Server（目标 v0.6）
 在 Phase T 已交付的全屏 TUI 上做体验与视觉打磨，延续「只改 `internal/tui/`、不动核心」原则。TUI 五项：① lazygit 式配色/圆角/序号面板 + 底部键位栏；② Connections 仅显示名称 + 数据库类型图标；③ SQL 编辑器面积约翻倍；④ 界面内「新增连接」表单（写 config + 密码进 keychain）；⑤ 结果面板过滤器。另新增 **SQL Server 驱动**（`microsoft/go-mssqldb`，纯 Go 免 CGO），按既有「只加一个 driver 包」扩展模式（同 MySQL），核心零改动。详见 [TUI.md](./TUI.md) 「TUI 强化」节，WBS 见 [TASKS.md](./TASKS.md) Phase 3（T3-1~T3-5、P3-DB1）。
+
+### Phase 4 — TUI 交互重构（目标 v0.7）
+按用户反馈调整 TUI 层次：① 背景与终端/lazygit 一致（用终端默认背景）；② **Connections 可展开到数据库**（连接→库下拉）；③ **Schema 只显示所选库的表并可检索**（库层从 Schema 上移到 Connections，取代 B-7 的 Schema 库→表树）；④ 新功能用法同步进使用手册 [MANUAL.md](./MANUAL.md)。仍只改 `internal/tui/`，核心零改动。WBS 见 [TASKS.md](./TASKS.md) Phase 4（T4-1~T4-4）。
 
 ### Backlog（按需，未排期）
 更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插件、SSH 隧道、TLS/IAM、数据导入导出、历史/收藏云同步。

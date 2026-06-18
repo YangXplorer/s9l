@@ -223,17 +223,23 @@ func (a *App) deleteConnection(id string) error {
 	return nil
 }
 
-// selectedConn returns the connection highlighted in the Connections list. The
-// list mirrors cfg.Connections order, so the current index maps directly.
+// selectedConn returns the connection highlighted in the Connections tree. The
+// current node is either a connection node or one of its database children, so
+// resolve a database node up to its owning connection.
 func (a *App) selectedConn() (config.ConnectionConfig, bool) {
-	if len(a.cfg.Connections) == 0 {
+	node := a.connTree.GetCurrentNode()
+	if node == nil {
 		return config.ConnectionConfig{}, false
 	}
-	idx := a.connList.GetCurrentItem()
-	if idx < 0 || idx >= len(a.cfg.Connections) {
-		return config.ConnectionConfig{}, false
+	switch ref := node.GetReference().(type) {
+	case connNodeRef:
+		return ref.cc, true
+	case dbNodeRef:
+		if cc, ok := a.cfg.Get(ref.connID); ok {
+			return cc, true
+		}
 	}
-	return a.cfg.Connections[idx], true
+	return config.ConnectionConfig{}, false
 }
 
 // editSelectedConn opens the form pre-filled with the highlighted connection.

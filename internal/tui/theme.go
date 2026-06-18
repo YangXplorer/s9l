@@ -69,6 +69,21 @@ func (t Theme) reset() string {
 	return "[-]"
 }
 
+// applyStyles points tview's global Styles at the terminal's own background and
+// foreground so the UI blends into the terminal like lazygit (tview otherwise
+// paints a solid black background). Contrast colors (input fields, buttons, the
+// delete modal) are left at tview's defaults so they stay visible on the
+// now-transparent background.
+func (t Theme) applyStyles() {
+	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
+	tview.Styles.PrimaryTextColor = tcell.ColorDefault
+	tview.Styles.BorderColor = t.Border
+	tview.Styles.TitleColor = t.Title
+	tview.Styles.GraphicsColor = t.Border
+	tview.Styles.SecondaryTextColor = t.Dim
+	tview.Styles.TertiaryTextColor = t.Accent
+}
+
 // useRoundedBorders switches tview's global box-drawing runes to rounded
 // corners (both normal and focus variants) for a softer, lazygit-like frame.
 // Focus is conveyed by border color, not by switching to double lines.

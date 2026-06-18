@@ -313,6 +313,32 @@
 
 ---
 
+## Phase 4 — TUI 交互重构（目标 v0.7）
+
+预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
+> 模型调整：把「数据库」层从 Schema 面板（B-7 的库→表树）上移到 **Connections 面板**（连接→数据库可展开），**Schema 面板只显示所选数据库的表**并支持检索。这取代/调整 B-7 在 Schema 内的库层级，更贴合用户期望的 lazygit 式层次。
+
+- [x] **T4-1 背景色与 lazygit 一致（终端默认背景）**
+  - 产出：`theme.go` `applyStyles()`——设 `tview.Styles.PrimitiveBackgroundColor/PrimaryTextColor = ColorDefault`(面板/文字透传终端，像 lazygit)，`BorderColor/TitleColor/GraphicsColor/Secondary/Tertiary` 用主题色；`ContrastBackgroundColor`/`MoreContrast`/`Inverse` 保留 tview 默认以保证输入框/按钮/删除模态在透明背景上可见。`New` 中 buildLayout 前调用一次。
+  - DoD：白盒 `TestApplyStylesUsesTerminalBackground`(PrimitiveBackground/PrimaryText==ColorDefault) ✅；真实 pty——4 面板正常渲染、输出**无强制黑底 SGR `40m`**(终端默认背景透传，对比改动前满屏 `40m`) ✅；核心零改动。
+  - 依赖：T3-1 · 预估：0.5d
+- [x] **T4-2 Connections 面板：连接 → 数据库（可展开）**
+  - 产出：Connections 由 `tview.List` 改为 `tview.TreeView`(`SetTopLevel(1)` 隐藏合成根)；`connNodeRef{cc}`/`dbNodeRef{connID,db}` 节点引用；`onConnSelect`：连接节点→`connect`+`loadConnDatabases`(多库引擎列 `Metadata.Databases` 为子节点、Schema 占位 "select a database"；单库引擎直接 `loadSchema`)+展开；数据库节点→设 `currentDB`+`loadSchema`+状态。`connect` 不再直接 loadSchema(由调用方决定，auto-connect 经 `findConnNode`+`onConnSelect` 复用同一路径)；`loadSchema` 改为列「当前库」表(`databaseBrowser.TablesIn(currentDB)` 或 `Metadata.Tables`)；`selectedConn` 由列表索引改为按当前节点引用(库节点回溯到所属连接)，B-6 的 `e`/`d` 适配；图标(T3-2)在连接节点。移除 B-7 在 Schema 内的 db 节点/`loadTablesInto`(库层已上移)。
+  - DoD：白盒 `TestLoadConnDatabases`(连接→库子节点排序、currentDB 待选)、`TestLoadSchemaForCurrentDB`(选库→该库表 `tableRef{db}`)、`TestSelectedConn`(树节点映射)、既有 `TestConnectionsPopulated`/`TestConnListShowsIconAndName`/E2E 适配 ✅；真实 MySQL `neohub-dev` pty——auto-connect 后 Connections 展开出 information_schema/mysql 等库、Schema 显示 "select a database" ✅；核心零改动。
+  - 依赖：T4-1、B-6、B-7 · 预估：1d
+- [x] **T4-3 Schema 面板：当前数据库的表 + 检索**
+  - 产出：`loadSchema` 拆为「取表(`databaseBrowser.TablesIn(currentDB)` 否则 `Metadata.Tables`)→存 `schemaTables`→`renderSchema`」；`filterTables(names, term)` 纯函数(子串、大小写不敏感)；`renderSchema` 按 `schemaFilter` 重建表节点(`tableRef{db:currentDB}`)；`applySchemaFilter`(状态 `tables M/N`)；`showFilter` 改为按聚焦面板分派——Schema(focusIdx==1)过滤表名、否则过滤结果行；`hideFilter` 对应清空。help/keybar `/` 文案更新。
+  - DoD：白盒 `TestFilterTables`(空/大小写/无匹配)、`TestApplySchemaFilterRerenders`(过滤后节点数+清空恢复)、`TestLoadSchemaForCurrentDB` ✅；真实 MySQL pty——选库→Schema 列表→`/` 输入→"Filter tables"/"tables 5/18" ✅；核心零改动。
+  - 依赖：T4-2 · 预估：1d
+- [x] **T4-4 使用手册 / README 更新（随 T4-1~3 落地）**
+  - 产出：`docs/MANUAL.md` §11 全屏 TUI 重写——新布局图(Connections 连接→库树、Schema 当前库表+`/tbl` 检索、两行状态/键位栏)、按键表(`n/e/d`、`/` 分派、`Enter` 连接展开库/选库/预览)、§11.3 界面内管理连接、终端背景说明；§环境变量增 `NO_COLOR`/`S9L_TUI_ICONS`；支持库加 SQL Server。README `## Terminal UI` 面板/键位已随 T4-1/T4-2 同步。
+  - DoD：手册/README 与 T4-1~3 新交互一致(每个新功能都有用法)，随实现 PR 同步提交 ✅。
+  - 依赖：T4-1/T4-2/T4-3 · 预估：0.5d
+
+**Phase 4 验收**：背景与终端/lazygit 一致；Connections 可展开到数据库、选库刷新 Schema；Schema 显示当前库表且可检索；新功能用法已写入使用手册。核心层零改动；CI 绿；逻辑白盒 + SimulationScreen 冒烟 + 手动清单通过。
+
+---
+
 ## Backlog（未排期，按需）
 
 > 已细化「需要修改的内容」便于将来直接领取。标注 **架构影响**：✅=核心零改动（新增包/扩展配置即可）；⚠️=需小幅触碰连接编排或 Metadata 可选接口；🔴=需改核心抽象，开工前先做设计 spike。

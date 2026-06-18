@@ -132,22 +132,23 @@ s9l tui          # choose a connection inside the UI
 s9l tui mydb     # auto-connect to a named connection
 ```
 
-Panels: **Connections** (from your config) · **Schema** · **Results** · **SQL
-editor**. On MySQL the Schema panel is a database → table tree (expand a database
-to load its tables — handy when the connection has no default database); other
-engines list the connected database's tables. Select a table to preview it, or
-write SQL and run it with F5. Queries run asynchronously and can be cancelled
-with Esc.
+Panels: **Connections** (a tree of your configured connections) · **Schema** ·
+**Results** · **SQL editor**. On MySQL, pressing `Enter` on a connection connects
+and expands it to its **databases**; pick a database and the **Schema** panel
+lists that database's tables (handy when the connection has no default database).
+Other engines list the connected database's tables directly. Press `/` in the
+Schema panel to filter table names. Select a table to preview it, or write SQL
+and run it with F5. Queries run asynchronously and can be cancelled with Esc.
 
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift-Tab` | switch panel |
 | `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
 | `Up`/`Down` · `j`/`k` | navigate within a panel |
-| `Enter` | connect (Connections) · preview table (Schema) |
+| `Enter` | Connections: connect + list databases · pick a database · Schema: preview table |
 | `n` / `e` / `d` | add / edit / delete a connection (Connections panel; passwords in the keychain) |
 | `F5` | run the SQL editor |
-| `/` | filter the results (substring, any column) |
+| `/` | filter — Schema: table names · Results: rows (substring, case-insensitive) |
 | `Esc` | cancel a running query · clear the filter |
 | `Ctrl-R` | query history — `Enter` loads an entry into the editor |
 | `Ctrl-F` | saved queries — `Enter` runs the selected one |
@@ -156,8 +157,9 @@ with Esc.
 | `q` / `Ctrl-C` | quit |
 
 The TUI uses a lazygit-style theme (numbered, rounded panels; the focused
-panel is highlighted; a shortcut bar sits at the bottom). Set `NO_COLOR` to
-disable colors. The Connections panel shows a per-database icon next to each
+panel is highlighted; a shortcut bar sits at the bottom) and inherits your
+terminal's background so it blends in like lazygit. Set `NO_COLOR` to disable
+colors. The Connections panel shows a per-database icon next to each
 name; icons default to short ASCII tags (`[pg]`, `[my]`, `[sq]`, `[ms]`) — set
 `S9L_TUI_ICONS=nerd` for Nerd Font glyphs, or `S9L_TUI_ICONS=off` to hide them.
 

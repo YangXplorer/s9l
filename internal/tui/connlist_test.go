@@ -53,7 +53,7 @@ func TestConnListShowsIconAndName(t *testing.T) {
 		{ID: "pg", Name: "Dev Postgres", Driver: "postgres"},
 	}}
 	a := New(Options{Config: cfg})
-	main, _ := a.connList.GetItemText(0)
+	main := a.connTree.GetRoot().GetChildren()[0].GetText()
 	if !strings.HasPrefix(main, "[pg] ") || !strings.Contains(main, "Dev Postgres") {
 		t.Errorf("conn row = %q, want icon + display name", main)
 	}
