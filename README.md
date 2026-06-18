@@ -142,7 +142,7 @@ it with F5. Queries run asynchronously and can be cancelled with Esc.
 | `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
 | `Up`/`Down` · `j`/`k` | navigate within a panel |
 | `Enter` | connect (Connections) · preview table (Schema) |
-| `n` | add a new connection (form; password stored in the keychain) |
+| `n` / `e` / `d` | add / edit / delete a connection (Connections panel; passwords in the keychain) |
 | `F5` | run the SQL editor |
 | `/` | filter the results (substring, any column) |
 | `Esc` | cancel a running query · clear the filter |

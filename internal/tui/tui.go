@@ -72,6 +72,7 @@ type App struct {
 	savedOpen    bool
 	filterOpen   bool
 	connFormOpen bool
+	confirmOpen  bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -240,7 +241,7 @@ const helpText = `[::b]s9l TUI[::-]
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
-  n                 new connection
+  n / e / d         new / edit / delete connection
   F5                run SQL editor
   /                 filter results
   Ctrl-R            query history (Enter loads it)
@@ -722,12 +723,24 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
-	// While the new-connection form is open, Esc cancels; everything else is
+	// While the new/edit-connection form is open, Esc cancels; everything else is
 	// handled by the form (field navigation, typing). Before vim-nav so typing
 	// stays literal.
 	if a.connFormOpen {
 		if ev.Key() == tcell.KeyEscape {
 			a.hideConnForm()
+			return nil
+		}
+		return ev
+	}
+
+	// While the delete-confirmation modal is open, Esc cancels; arrows/Enter go
+	// to the modal's buttons.
+	if a.confirmOpen {
+		if ev.Key() == tcell.KeyEscape {
+			a.pages.RemovePage("confirmdel")
+			a.confirmOpen = false
+			a.app.SetFocus(a.navPanels()[a.focusIdx])
 			return nil
 		}
 		return ev
@@ -822,8 +835,18 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			a.showFilter()
 			return nil
 		case 'n':
-			a.showConnForm()
+			a.showConnForm(nil)
 			return nil
+		case 'e':
+			if a.focusIdx == 0 {
+				a.editSelectedConn()
+				return nil
+			}
+		case 'd':
+			if a.focusIdx == 0 {
+				a.confirmDeleteSelectedConn()
+				return nil
+			}
 		}
 	}
 	return ev
