@@ -205,7 +205,7 @@
   - 产出：`internal/secret/keychain.go`（`Keychain` 实现 SecretStore，基于 `zalando/go-keyring`；`Default()` 返回 keychain；`KeychainRef`/`ConnPasswordKey` 辅助）；`s9l conn add --password` 写入 keychain 并自动设 `password_ref`，`conn rm` 删除；`resolveTarget` 与 TUI 改用 `secret.Default()`；`keychain://` 解析复用既有 `Resolve`
   - DoD：`conn add --password` 存 keychain、config 仅留 ref、解析回连（白盒 `TestConnAddWithPasswordUsesKeychain`，用 go-keyring `MockInit`）✅；keychain 只在 `keychain://` ref 时触碰（env:/无密码连接无需 keyring 后端）✅；切换 memory→keychain 调用方不变（`SecretStore` 接口）✅
   - 预估：1d · 注：真实 OS keychain 读写为手动验证（CI 用 MockInit，符合 TESTING.md 约定）；对话式密码输入后续
-- [ ] **P2-7 schema cache（可选）**（`~/.cache/s9l/schema.db`，缓存表/列元数据加速补全）· 预估：1d
+- [x] **P2-7 schema cache**：`internal/schemacache`(SQLite `~/.cache/s9l/schema.db`，遵循 `$XDG_CACHE_HOME`，0700/0600)，按 connection_id 存表/列名(`cached_tables`/`cached_columns`，列保序)。`schemaCache` 接入永续层：**live 优先 + 成功 write-through + live 失败时 disk 回退**(上次会话的 last-known schema)，跨会话/离线仍可补全。**仅名为连接缓存**(bare DSN 可能含密码 → connID="" 不持久化，遵守"不存明文密码")。白盒 schemacache 包测试(round-trip/replace/隔离/列序/迁移幂等) + cmd write-through/fallback 集成测试。核心 driver 层零改动。· 预估：1d
 - [x] **P2-8 发布渠道扩展（Homebrew）**：建 `YangXplorer/homebrew-tap`；`.goreleaser.yaml` 加 `homebrew_casks`(非 deprecated, 含 quarantine 清除 hook)；`release.yml` 传 `HOMEBREW_TAP_TOKEN`(已设为 repo secret)；README 加 `brew install YangXplorer/tap/s9l`。`goreleaser check` 干净、snapshot 生成 cask。首个 tag(>= 下次发布)推送 formula 后 brew 可用。· 预估：0.5d · 注：install.sh 留后续
 
 **Phase 2 验收**：新增 MySQL 不触碰核心层；补全/分页可用；密码进系统 Keychain；config.yaml 无明文密码；`brew install` 可用。

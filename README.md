@@ -110,6 +110,9 @@ Manage connections with `s9l conn add|list|rm`.
 In the REPL / with `-e`: `\l`, `\dt`, `\d [table]`, `\?`, and `\q` (REPL quit).
 Press `Tab` in the REPL to complete keywords, table names, and column names
 (including `table.column` and columns of tables named in the current line).
+For named connections the schema is cached at `$XDG_CACHE_HOME/s9l/schema.db`
+(falling back to `~/.cache/s9l/schema.db`), so completion stays available across
+sessions and even when a live metadata lookup fails.
 
 Flags: `--format table|json|csv|tsv`, `--max-col-width N` (truncate table cells),
 `--timeout 30s` (abort a slow query). Press `Ctrl-C` to cancel a running query.

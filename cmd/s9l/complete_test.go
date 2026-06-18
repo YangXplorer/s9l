@@ -7,7 +7,18 @@ import (
 	"testing"
 
 	"github.com/YangXplorer/s9l/internal/driver"
+	"github.com/YangXplorer/s9l/internal/schemacache"
 )
+
+func openTempCache(t *testing.T) *schemacache.Store {
+	t.Helper()
+	s, err := schemacache.Open(filepath.Join(t.TempDir(), "schema.db"))
+	if err != nil {
+		t.Fatalf("open cache: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
 
 // TestSchemaCacheOverSQLite checks the metadata-backed Schema against a real
 // SQLite connection: tables and columns are discovered and the completer wires
@@ -24,7 +35,7 @@ func TestSchemaCacheOverSQLite(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	schema := newSchemaCache(ctx, conn)
+	schema := newSchemaCache(ctx, conn, nil, "")
 	if schema == nil {
 		t.Fatal("sqlite conn should provide Metadata-backed schema")
 	}
@@ -38,7 +49,7 @@ func TestSchemaCacheOverSQLite(t *testing.T) {
 	}
 
 	// Completion through the readline adapter: "us" -> table "users".
-	comp := newCompleter(ctx, conn)
+	comp := newCompleter(ctx, conn, nil, "")
 	suffixes, prefixLen := comp.Do([]rune("select * from us"), 16)
 	if prefixLen != 2 {
 		t.Errorf("prefixLen = %d, want 2", prefixLen)
@@ -88,7 +99,7 @@ func (errMetadata) Columns(context.Context, string) (driver.Rows, error) {
 
 func TestSchemaCacheErrorIsCached(t *testing.T) {
 	calls := 0
-	schema := newSchemaCache(context.Background(), errMetadata{tablesCalls: &calls})
+	schema := newSchemaCache(context.Background(), errMetadata{tablesCalls: &calls}, nil, "")
 	if schema == nil {
 		t.Fatal("errMetadata implements Metadata; schema should be non-nil")
 	}
@@ -105,5 +116,56 @@ func TestSchemaCacheErrorIsCached(t *testing.T) {
 	// Columns error path also yields nil without panicking.
 	if got := schema.Columns("anything"); got != nil {
 		t.Errorf("Columns() on error = %v, want nil", got)
+	}
+}
+
+// TestSchemaCacheWriteThrough checks that a successful live lookup is persisted
+// to the on-disk cache for a named connection.
+func TestSchemaCacheWriteThrough(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "c.db")
+	conn, err := driver.Open(ctx, "sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Query(ctx, "create table users(id integer, name text)"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store := openTempCache(t)
+	schema := newSchemaCache(ctx, conn, store, "app")
+	_ = schema.Tables()         // triggers live fetch + write-through
+	_ = schema.Columns("users") // ditto for columns
+
+	tables, _ := store.Tables(ctx, "app")
+	if len(tables) != 1 || tables[0] != "users" {
+		t.Errorf("persisted tables = %v, want [users]", tables)
+	}
+	cols, _ := store.Columns(ctx, "app", "users")
+	if len(cols) != 2 || cols[0] != "id" || cols[1] != "name" {
+		t.Errorf("persisted columns = %v, want [id name]", cols)
+	}
+}
+
+// TestSchemaCacheDiskFallback checks that when the live lookup fails, the
+// last-known schema is served from the on-disk cache.
+func TestSchemaCacheDiskFallback(t *testing.T) {
+	ctx := context.Background()
+	store := openTempCache(t)
+	if err := store.SaveTables(ctx, "x", []string{"cached_tbl"}); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if err := store.SaveColumns(ctx, "x", "cached_tbl", []string{"c1", "c2"}); err != nil {
+		t.Fatalf("seed columns: %v", err)
+	}
+
+	calls := 0
+	schema := newSchemaCache(ctx, errMetadata{tablesCalls: &calls}, store, "x")
+	if got := schema.Tables(); len(got) != 1 || got[0] != "cached_tbl" {
+		t.Errorf("fallback tables = %v, want [cached_tbl]", got)
+	}
+	if got := schema.Columns("cached_tbl"); len(got) != 2 {
+		t.Errorf("fallback columns = %v, want 2 entries", got)
 	}
 }
