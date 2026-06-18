@@ -105,8 +105,10 @@ type SecretStore interface {
 
 ### 分版落地（与 Phase 对齐）
 - **v0.1（≈ MVP / Phase 1）**：config.yaml 连接 + 密码起动时输入（不保存，`SecretStore=memory`）+ SQLite `query_history`/`saved_queries`
-- **v0.2+（Phase 2）**：系统 Keychain（`SecretStore=keychain`，✅ 已实现）+ schema cache（待）
-- **v0.3（≈ Phase 3）**：SSH Tunnel + TLS 配置 + AWS RDS IAM Auth
+- **v0.2~v0.4（Phase 2）**：系统 Keychain（`SecretStore=keychain`，✅）+ schema cache（✅）+ 补全/分页/收藏分组（✅）
+- **v0.5（Phase T）**：全屏 TUI（lazygit 式，连接/树/结果/编辑器/历史/收藏，✅）
+- **v0.6（≈ Phase 3）**：TUI 强化（lazygit 风格配色/布局、Connections 图标、SQL 编辑器扩大、界面内新增连接、结果过滤器）+ 新增 **SQL Server** 驱动
+- **后续 Backlog（未排期）**：SSH Tunnel + TLS 配置 + AWS RDS IAM Auth + 更多数据库
 
 ## 需求拆解
 
@@ -169,8 +171,11 @@ MySQL(P2-1 ✅) + 补全 + 系统 Keychain + 输出分页 + 错误打磨 + Homeb
 ### Phase T — 全屏 TUI（lazygit 式，新增的一等交付）
 基于已有 driver/config/secret/history 层，加一层 tview 多面板界面：连接列表 + schema 树 + 结果表格 + SQL 编辑器 + 历史/收藏面板。经 `s9l tui [conn]` 进入。**先做 MVP 垂直切片**（连接→schema 树→选表查询→结果浏览），再迭代编辑器/历史/收藏/键位打磨。详见 [TUI.md](./TUI.md)，WBS 见 [TASKS.md](./TASKS.md) Phase T。
 
-### Phase 3 — 进阶（按需，Backlog）
-更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插件、SSH 隧道、数据导入导出。
+### Phase 3 — TUI 强化 + SQL Server（目标 v0.6）
+在 Phase T 已交付的全屏 TUI 上做体验与视觉打磨，延续「只改 `internal/tui/`、不动核心」原则。TUI 五项：① lazygit 式配色/圆角/序号面板 + 底部键位栏；② Connections 仅显示名称 + 数据库类型图标；③ SQL 编辑器面积约翻倍；④ 界面内「新增连接」表单（写 config + 密码进 keychain）；⑤ 结果面板过滤器。另新增 **SQL Server 驱动**（`microsoft/go-mssqldb`，纯 Go 免 CGO），按既有「只加一个 driver 包」扩展模式（同 MySQL），核心零改动。详见 [TUI.md](./TUI.md) 「TUI 强化」节，WBS 见 [TASKS.md](./TASKS.md) Phase 3（T3-1~T3-5、P3-DB1）。
+
+### Backlog（按需，未排期）
+更多数据库（SQL Server/ClickHouse/Mongo 等）、运行期插件、SSH 隧道、TLS/IAM、数据导入导出、历史/收藏云同步。
 
 ## 依赖与阻塞
 

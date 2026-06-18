@@ -274,13 +274,52 @@
 
 ---
 
-## Phase 3 — Backlog（v0.3+，按需，未排期）
+## Phase 3 — TUI 强化 + SQL Server（目标 v0.6）
+
+预估合计：~2.5–3.5 人周。TUI 五项延续 Phase T 原则：**只改 `internal/tui/`，不动 driver/config/secret/history 核心**；SQL Server 走既有「新增数据库只加一个 driver 包」的扩展模式（同 P2-1 MySQL）。逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。设计详见 [TUI.md](./TUI.md) 「TUI 强化」节。
+
+### TUI 强化（lazygit 风格打磨）
+
+- [ ] **T3-1 主题与 lazygit 式视觉/布局**
+  - 产出：`internal/tui/theme.go` 集中配色（focus/accent/select/border/dim 常量）；圆角边框（`tview.Borders` 配置）；面板标题带序号 `[1] Connections`…`[4] SQL`（与 `1/2/3/4` 跳转键一致）；聚焦面板高亮边框、非聚焦淡色；底部 lazygit 式「键位提示栏」（与状态行分离：状态行 + 键位行两行）；尊重 `NO_COLOR`
+  - DoD：聚焦面板边框高亮、标题带序号；底部键位栏列出上下文键；`NO_COLOR` 下不崩、可读；白盒（焦点切换→边框色变化）+ 真实 pty 截图核对
+  - 依赖：Phase T · 预估：2d
+- [ ] **T3-2 Connections 仅名称 + 数据库图标**
+  - 产出：`connIcon(driver)` 图标映射（postgres/mysql/sqlite/sqlserver，Nerd Font 字形 + ASCII 回退 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=0` 可关）；List 主文本改为 `<icon> <name|id>`，host/db 等细节移到淡色副行或去除
+  - DoD：列表每行 `图标 + 名称`；无 Nerd Font 时回退不乱码/不错位；白盒 `connIcon` + 列表填充测试
+  - 依赖：T3-1 · 预估：0.5d
+- [ ] **T3-3 SQL 编辑器面积翻倍**
+  - 产出：编辑器固定高 6 → 12（约一倍）；Results/SQL 纵向比例调整；可见行数常量化（便于将来配置）；小终端最小高度回退
+  - DoD：SQL 面板可见行数约翻倍；小窗口不挤爆布局；真实 pty 目视确认
+  - 依赖：T3-1 · 预估：0.25d
+- [ ] **T3-4 图形化「新增连接」表单**
+  - 产出：`internal/tui/connform.go`——Connections 面板 `n`（或 `Ctrl-N`）打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码) 或 password-ref；提交→校验→`config.Add`+`Save`，有密码则 `secret.Default().Set`（写 keychain，配置仅存 ref）→刷新 Connections 列表；`Esc` 取消；错误进表单/状态栏
+  - DoD：表单填写→保存→出现在 Connections 且写入 config.yaml（白盒：表单值→保存→`config.Load` 校验、密码进 keychain 用 go-keyring `MockInit` 验 ref 与解析）；重复 id/缺必填 报错不崩；`Esc` 无副作用；真实 pty `n`→填→保存→可见
+  - 依赖：T3-1 · 预估：1.5d · 注：复用 `config`/`secret`，核心零改动；编辑/删除连接可后续
+- [ ] **T3-5 结果过滤器**
+  - 产出：App 保存上次结果集（列+行）；Results 面板 `/` 打开过滤输入框，按子串（大小写不敏感、跨列）实时过滤行并重渲染；`Esc` 关闭/清空、空过滤显示全部；状态栏显示 `filtered M/N`；NULL 单元格按既有文本参与匹配
+  - DoD：`filterRows(cols,rows,term)` 纯函数白盒（大小写/跨列/NULL/空 term）+ 应用后行数断言；真实 pty `/`→输入→Esc
+  - 依赖：T-1c（结果表格）· 预估：1d · 注：客户端内存过滤（结果已在内存）；服务端 WHERE 注入留后续
+
+### 新数据库：SQL Server
+
+- [ ] **P3-DB1 SQL Server 适配器**
+  - 产出：`internal/driver/sqlserver/`，用 `github.com/microsoft/go-mssqldb`（纯 Go，免 CGO）；`[]byte`→string 归一化；Metadata 用 `INFORMATION_SCHEMA` / 系统目录（`\l`=`sys.databases`、`\dt`=当前库 `INFORMATION_SCHEMA.TABLES`、`\d`=`INFORMATION_SCHEMA.COLUMNS`，`@p1` 占位）；config 加 sqlserver DSN 分支（`sqlserver://user:pass@host:port?database=db&encrypt=...`）+ 注册
+  - DoD：连 SQL Server，流式 rows；`RunConformance` 对真实 SQL Server（testcontainers `mcr.microsoft.com/mssql/server:2022-latest`）全 PASS；`\l`/`\dt`/`\d` 正确；**核心层零改动**（仅新增 driver 包 + config DSN 分支 + 注册）
+  - 依赖：P0-3（Driver 接口）· 预估：1.5d
+  - 注：**方言差异需评估**——T-SQL 无 `LIMIT`（用 `TOP n` 或 `OFFSET…FETCH`）、占位符 `@p1`、标识符 `[brackets]` 引用。若 `drivertest` 一致性套件用到 `LIMIT`/自增列等不可移植 SQL，需让套件方言无关或在 driver 内适配（差异下沉到 driver，不污染核心）。镜像较大（>1GB）、容器启动慢，IT 用 `testing.Short()` 隔离并放宽等待超时。
+
+**Phase 3 验收**：TUI 具备 lazygit 式配色/圆角/序号面板/底部键位栏；Connections 显示图标+名称；SQL 编辑器约翻倍；可在界面内新增连接并持久化（密码进 keychain）；结果可即时过滤；新增 SQL Server 仅动 driver 层、conformance 全 PASS。核心层零改动；CI 绿；逻辑白盒 + SimulationScreen 冒烟 + 手动清单通过。
+
+---
+
+## Backlog（未排期，按需）
 
 - **SSH Tunnel**（连接前建隧道）
 - **TLS 配置**（CA/客户端证书、`sslmode` 细化）
 - **AWS RDS IAM Auth**（临时 token 连接）
-- TUI 全屏模式（结果浏览/编辑）
-- 更多数据库：SQL Server / ClickHouse / MongoDB（需评估非关系型对接口的冲击）
+- 更多数据库：ClickHouse / MongoDB（需评估非关系型对接口的冲击）
+- TUI 连接编辑/删除、跨库浏览（库→表 多级树）、结果导出
 - 运行期插件机制（plugin / wasm）— 仅当编译期抽象不够用时再评估
 - 数据导入导出（CSV/JSON 批量）
 - 历史/收藏的云同步与统计
