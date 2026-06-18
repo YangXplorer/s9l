@@ -72,6 +72,7 @@ type App struct {
 	savedOpen    bool
 	filterOpen   bool
 	connFormOpen bool
+	confirmOpen  bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -240,7 +241,7 @@ const helpText = `[::b]s9l TUI[::-]
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
-  n                 new connection
+  n / e / d         new / edit / delete connection
   F5                run SQL editor
   /                 filter results
   Ctrl-R            query history (Enter loads it)
@@ -296,21 +297,78 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	return nil
 }
 
-// onSchemaSelect handles Enter on a schema node: a table node (its reference is
-// the table name) runs a preview query; the root node toggles expansion.
-func (a *App) onSchemaSelect(node *tview.TreeNode) {
-	table, ok := node.GetReference().(string)
-	if !ok || table == "" {
-		node.SetExpanded(!node.IsExpanded())
-		return
-	}
-	a.runTableQuery(table)
+// databaseBrowser is an optional capability matched structurally (so the core
+// driver package is untouched): a conn that can list tables in a *named*
+// database. It enables the database→table tree. MySQL implements it; engines
+// that can't browse other databases on a single connection (e.g. PostgreSQL)
+// don't, and fall back to listing the connected database's tables.
+type databaseBrowser interface {
+	TablesIn(ctx context.Context, database string) (driver.Rows, error)
 }
 
-// runTableQuery previews a table: SELECT * ... LIMIT resultLimit. The table name
-// is quoted per dialect to tolerate reserved words / special characters.
-func (a *App) runTableQuery(table string) {
-	a.runQuery(fmt.Sprintf("SELECT * FROM %s LIMIT %d", quoteIdent(a.driverName, table), resultLimit))
+// schema-tree node references.
+type dbRef struct{ name string }        // a database node (lazy-loads its tables)
+type tableRef struct{ db, name string } // a table node; db=="" means current db
+
+// onSchemaSelect handles Enter on a schema node: a table node runs a preview
+// query; a database node lazy-loads its tables and toggles; anything else just
+// toggles expansion.
+func (a *App) onSchemaSelect(node *tview.TreeNode) {
+	switch ref := node.GetReference().(type) {
+	case tableRef:
+		a.runTableQuery(ref)
+	case dbRef:
+		if len(node.GetChildren()) == 0 {
+			a.loadTablesInto(node, ref.name)
+		}
+		node.SetExpanded(!node.IsExpanded())
+	default:
+		node.SetExpanded(!node.IsExpanded())
+	}
+}
+
+// loadTablesInto lazily fills a database node with its tables.
+func (a *App) loadTablesInto(node *tview.TreeNode, db string) {
+	browser, ok := a.conn.(databaseBrowser)
+	if !ok {
+		return
+	}
+	tables, err := namesFrom(browser.TablesIn(context.Background(), db))
+	if err != nil {
+		a.setError("list tables: " + err.Error())
+		return
+	}
+	if len(tables) == 0 {
+		node.AddChild(tview.NewTreeNode("(no tables)"))
+		return
+	}
+	for _, t := range tables {
+		node.AddChild(tview.NewTreeNode(t).SetReference(tableRef{db: db, name: t}))
+	}
+}
+
+// runTableQuery previews a table: the first resultLimit rows. The name is quoted
+// per dialect (and database-qualified when browsing another database).
+func (a *App) runTableQuery(ref tableRef) {
+	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), resultLimit))
+}
+
+// qualifyTable builds the quoted, optionally database-qualified table name.
+func qualifyTable(driverName string, ref tableRef) string {
+	t := quoteIdent(driverName, ref.name)
+	if ref.db != "" {
+		t = quoteIdent(driverName, ref.db) + "." + t
+	}
+	return t
+}
+
+// previewQuery builds a "first N rows" SELECT, dialect-aware: SQL Server has no
+// LIMIT and uses TOP instead.
+func previewQuery(driverName, qualified string, n int) string {
+	if driverName == "sqlserver" {
+		return fmt.Sprintf("SELECT TOP %d * FROM %s", n, qualified)
+	}
+	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", qualified, n)
 }
 
 // queryResult holds a fetched result set.
@@ -655,10 +713,11 @@ func quoteIdent(driverName, name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// loadSchema populates the schema tree with the connected database's tables via
-// the driver's Metadata capability. Table nodes carry the table name as their
-// reference (used by T-1c to run SELECT). Multi-database browsing (switching
-// databases) is a later enhancement — a single connection sees one database.
+// loadSchema populates the schema tree via the driver's Metadata capability.
+// Drivers that can browse other databases on the connection (databaseBrowser,
+// e.g. MySQL) get a database→table tree (each database lazy-loads its tables on
+// expand); others list the connected database's tables directly. This fixes the
+// "no tables shown" case when a connection has no default database selected.
 func (a *App) loadSchema() {
 	root := tview.NewTreeNode(a.connID).SetColor(tcell.ColorYellow)
 	a.schema.SetRoot(root).SetCurrentNode(root)
@@ -668,19 +727,39 @@ func (a *App) loadSchema() {
 		root.AddChild(tview.NewTreeNode("(driver has no metadata)"))
 		return
 	}
-	rows, err := md.Tables(context.Background())
+
+	if _, multi := a.conn.(databaseBrowser); multi {
+		dbs, err := namesFrom(md.Databases(context.Background()))
+		if err != nil {
+			a.setError("list databases: " + err.Error())
+			return
+		}
+		for _, db := range dbs {
+			root.AddChild(tview.NewTreeNode(db).
+				SetReference(dbRef{name: db}).
+				SetColor(a.theme.Accent).
+				SetExpanded(false))
+		}
+		return
+	}
+
+	tables, err := namesFrom(md.Tables(context.Background()))
 	if err != nil {
 		a.setError("list tables: " + err.Error())
 		return
 	}
-	tables, err := collectFirstColumn(rows)
-	if err != nil {
-		a.setError("read tables: " + err.Error())
-		return
-	}
 	for _, name := range tables {
-		root.AddChild(tview.NewTreeNode(name).SetReference(name))
+		root.AddChild(tview.NewTreeNode(name).SetReference(tableRef{name: name}))
 	}
+}
+
+// namesFrom collects the first column of rows (a name listing), folding the
+// query error in for terse call sites.
+func namesFrom(rows driver.Rows, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	return collectFirstColumn(rows)
 }
 
 // collectFirstColumn reads the first column of every row as a string, closing
@@ -722,12 +801,24 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
-	// While the new-connection form is open, Esc cancels; everything else is
+	// While the new/edit-connection form is open, Esc cancels; everything else is
 	// handled by the form (field navigation, typing). Before vim-nav so typing
 	// stays literal.
 	if a.connFormOpen {
 		if ev.Key() == tcell.KeyEscape {
 			a.hideConnForm()
+			return nil
+		}
+		return ev
+	}
+
+	// While the delete-confirmation modal is open, Esc cancels; arrows/Enter go
+	// to the modal's buttons.
+	if a.confirmOpen {
+		if ev.Key() == tcell.KeyEscape {
+			a.pages.RemovePage("confirmdel")
+			a.confirmOpen = false
+			a.app.SetFocus(a.navPanels()[a.focusIdx])
 			return nil
 		}
 		return ev
@@ -822,8 +913,18 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			a.showFilter()
 			return nil
 		case 'n':
-			a.showConnForm()
+			a.showConnForm(nil)
 			return nil
+		case 'e':
+			if a.focusIdx == 0 {
+				a.editSelectedConn()
+				return nil
+			}
+		case 'd':
+			if a.focusIdx == 0 {
+				a.confirmDeleteSelectedConn()
+				return nil
+			}
 		}
 	}
 	return ev

@@ -347,12 +347,14 @@
   - 目标：评估能否纳入文档型数据库。
   - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。
   - 决策点：先 spike 评估接口冲击与价值；很可能**暂不纳入**（s9l 定位 SQL 客户端），或仅做只读文档浏览。**开工前必须设计评审**。
-- [ ] **B-6 TUI 连接编辑/删除** · ✅ · 预估 1d
-  - 需要修改：扩展 Phase 3 的 `internal/tui/connform.go`——编辑(预填现有值)；Connections 面板 `d` 删除(确认浮层)→`config.Remove`+`Save`+`secret.Delete`(keychain 密码)；刷新列表。复用 config/secret，核心零改动。
-- [ ] **B-7 TUI 跨库浏览（库→表 多级树）** · ⚠️ · 预估 1.5d
-  - 目标：Schema 树从「单库表列表」升级为「库→表」多级（解决"未选默认库时看不到表"的痛点）。
-  - 需要修改：`internal/tui` Schema 树先 `Metadata.Databases()` 列库，展开某库再列其表；需要"按指定库列表"能力——给 `driver.Metadata` 增可选方法 `TablesIn(ctx, db)`（或树内跑带 schema 过滤的查询）。pg/mysql/sqlserver 各自实现（差异下沉 driver）。**Metadata 可选接口扩展**（向后兼容：未实现则回退当前库）。
-  - 关键考量：mysql 需 `USE`/限定库名，pg 走 `table_schema`，sqlserver 走三段名；保持向后兼容。
+- [x] **B-6 TUI 连接编辑/删除** · ✅ · 预估 1d
+  - 产出：`internal/tui/connform.go`——`showConnForm(edit *ConnectionConfig)` 复用为「新增/编辑」(编辑预填字段、密码留空=保留原 ref、改 id 唯一性校验)；`e` 编辑选中、`d` 删除选中(`tview.Modal` 确认)；`editConnection`(remove+add 替换，失败回滚原值；新密码写 keychain)/`deleteConnection`(`cfg.Remove`+`Save`+`secret.Delete` best-effort)/`selectedConn`(列表索引↔cfg.Connections)；onKey 增 confirmOpen 分支 + `e`/`d`(仅 Connections 面板)；help 增 `n/e/d`。复用 config/secret，核心零改动。
+  - DoD：白盒 `TestEditConnection`(改名+持久化+缺失/重名报错+回滚)、`TestEditConnectionUpdatesPassword`(keychain 更新)、`TestDeleteConnection`(移除+config.Load 校验+keychain 删除+重复删报错)、`TestSelectedConn`(索引映射) ✅；真实 pty `e`→Edit 表单、`d`→Delete 确认模态、help 列 n/e/d ✅。
+- [x] **B-7 TUI 跨库浏览（库→表 多级树）** · 预估 1.5d
+  - 产出：解决"未选默认库时看不到表"。**核心零改动**——用 Go 结构化类型：mysql driver 新增 `TablesIn(ctx, db)`(information_schema 服务端范围，按库参数化)；TUI 定义本地 `databaseBrowser` 接口结构化断言判定能力。有能力(mysql)→Schema 树「库→表」两级，展开库节点经 `loadTablesInto` 懒加载其表(`tableRef{db,name}`)；无能力(pg/sqlite/sqlserver)→维持单级当前库(`tableRef{name}`)。pg 同连接不能跨库且总有默认库故单级即可。
+  - 附带修复：`previewQuery` 方言化——SQL Server 用 `SELECT TOP n`（T-SQL 无 `LIMIT`），其余 `LIMIT n`，修正此前 TUI 预览在 SQL Server 上必失败的隐患；`qualifyTable` 跨库时 `库.表` 限定。
+  - DoD：白盒 `TestLoadSchemaMultiDB`(fake browser conn→库节点→展开懒加载→`tableRef{app,users}`)、`TestPreviewQuery`(TOP/LIMIT)、`TestQualifyTable`(限定/单段)；既有 sqlite 单级 `TestLoadSchemaShowsTables` 适配 `tableRef` ✅；mysql IT `TestMetadata` 增 `TablesIn(other)` 跨库列表(CI 真实容器) ✅；-short/lint/build 全绿 ✅。
+  - 注：sqlserver 多级(三段名+schema)与 pg schema 级浏览留后续；本次聚焦 mysql(用户实际痛点) + 修复 SQL Server 预览方言。
 - [ ] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
   - 现状：CLI `s9l <conn> -e "..." --format csv > f` 已能导出。
   - 需要修改：TUI Results 面板加 `e` 导出当前结果集到文件（CSV/JSON，**复用 `internal/render`**）；选路径/格式的小浮层。核心零改动。

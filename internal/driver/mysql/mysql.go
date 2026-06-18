@@ -72,6 +72,15 @@ func (c *conn) Tables(ctx context.Context) (driver.Rows, error) {
 	                     ORDER BY table_name`)
 }
 
+// TablesIn lists base tables in the named database. MySQL's information_schema
+// is server-wide, so this works for any database on the same connection — it
+// backs the TUI's database→table tree (matched structurally, no core change).
+func (c *conn) TablesIn(ctx context.Context, database string) (driver.Rows, error) {
+	return c.Query(ctx, `SELECT table_name AS name FROM information_schema.tables
+	                     WHERE table_schema = ? AND table_type = 'BASE TABLE'
+	                     ORDER BY table_name`, database)
+}
+
 // Columns implements driver.Metadata (\d <table>). The table name is bound as a
 // parameter, not interpolated.
 func (c *conn) Columns(ctx context.Context, table string) (driver.Rows, error) {
