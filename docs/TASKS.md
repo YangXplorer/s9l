@@ -313,6 +313,37 @@
 
 ---
 
+## Phase 4 — TUI 交互重构（目标 v0.7）
+
+预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
+> 模型调整：把「数据库」层从 Schema 面板（B-7 的库→表树）上移到 **Connections 面板**（连接→数据库可展开），**Schema 面板只显示所选数据库的表**并支持检索。这取代/调整 B-7 在 Schema 内的库层级，更贴合用户期望的 lazygit 式层次。
+
+- [ ] **T4-1 背景色与 lazygit 一致（终端默认背景）**
+  - 目标：TUI 背景跟随终端自身配色（lazygit 即用终端默认背景/透明），不强制某背景色——解决 s9l 当前背景与终端/lazygit 不一致的观感。
+  - 需要修改：`internal/tui` App 初始化设 `tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault`（及 `ContrastBackgroundColor`/`MoreContrastBackgroundColor`/`BorderColor`/`PrimaryTextColor` 等 `tview.Styles` 字段为 Default 或主题色），让面板/浮层/列表背景透传终端；与 `theme.go`/`NO_COLOR` 协调；必要时调整文字色保证默认背景上可读。
+  - DoD：TUI 背景与所在终端一致（与 lazygit 并排对比一致）；浮层/选中行/键位栏在默认背景上清晰可读；白盒断言 Styles 设置 + 真实 pty 目视核对。
+  - 依赖：T3-1 · 预估：0.5d · 注：`tview.Styles` 为全局，统一在 `New` 设置一次。
+- [ ] **T4-2 Connections 面板：连接 → 数据库（可展开）**
+  - 目标：Connections 从扁平 List 改为可展开树：连接为根，连接成功后在其下展开该连接的**数据库列表**；选中某数据库即设为「当前数据库」并刷新 Schema 面板。
+  - 需要修改：`internal/tui`——Connections 改 `tview.TreeView`（连接节点 + 数据库子节点）；`Enter` 连接节点=连接并加载其库（`Metadata.Databases()`，懒加载）；`Enter` 数据库节点=设 `a.currentDB` 并触发 `loadSchema`；图标(T3-2)/编辑删除(B-6)键位适配树结构（在连接节点上 `e`/`d`）；未连接的连接不展开。
+  - 关键考量：List→TreeView 的迁移影响 B-6 的 `selectedConn`（按节点引用而非列表索引取连接）；连接 vs 展开库的交互需直觉；多连接各自的库。
+  - DoD：选中连接 `Enter`→连接并列出其库；选中库→Schema 刷新为该库表；`e`/`d` 仍对连接生效；白盒（fake conn 列库、选库回调）+ pty；核心零改动。
+  - 依赖：T4-1、B-6、B-7 · 预估：1d
+- [ ] **T4-3 Schema 面板：当前数据库的表 + 检索**
+  - 目标：Schema 面板**只显示所选数据库的表**（库层已移到 Connections），并可检索表名。
+  - 需要修改：`internal/tui`——`loadSchema` 改为列「当前数据库」的表（`databaseBrowser.TablesIn(currentDB)`，无能力则 `Metadata.Tables()`）；表节点 `tableRef{db: currentDB, name}`；Schema 面板加检索框（`/` 聚焦时打开，或面板内输入）`filterTables(names, term)` 纯函数子串过滤实时刷新；选表 `Enter` 预览（沿用 `previewQuery`/`qualifyTable` 方言化）。
+  - 关键考量：与 B-7 的关系——B-7 在 Schema 内做库→表树；本任务把库移到 Connections(T4-2)，Schema 退化为「表列表 + 检索」。需平滑改造而非堆叠。
+  - DoD：Schema 列当前库表；检索框实时过滤表名（大小写不敏感、子串）；选表预览正确；白盒 `filterTables` + 过滤后节点数断言 + pty；核心零改动。
+  - 依赖：T4-2 · 预估：1d
+- [ ] **T4-4 使用手册 / README 更新（随 T4-1~3 落地）**
+  - 需要修改：`docs/MANUAL.md` 全屏 TUI 章节——更新布局图（Connections=连接→数据库可展开、Schema=当前库表+检索）、新键位（库展开、表检索）、背景色说明；README `## Terminal UI` 键位表与面板说明同步。
+  - DoD：手册/README 与 T4-1~3 的新交互完全一致（每个新功能都有用法说明）；随对应实现 PR 同步提交。
+  - 依赖：T4-1/T4-2/T4-3 · 预估：0.5d
+
+**Phase 4 验收**：背景与终端/lazygit 一致；Connections 可展开到数据库、选库刷新 Schema；Schema 显示当前库表且可检索；新功能用法已写入使用手册。核心层零改动；CI 绿；逻辑白盒 + SimulationScreen 冒烟 + 手动清单通过。
+
+---
+
 ## Backlog（未排期，按需）
 
 > 已细化「需要修改的内容」便于将来直接领取。标注 **架构影响**：✅=核心零改动（新增包/扩展配置即可）；⚠️=需小幅触碰连接编排或 Metadata 可选接口；🔴=需改核心抽象，开工前先做设计 spike。
