@@ -106,8 +106,9 @@ func TestLoadSchemaShowsTables(t *testing.T) {
 	got := map[string]bool{}
 	for _, n := range a.schema.GetRoot().GetChildren() {
 		got[n.GetText()] = true
-		if ref, _ := n.GetReference().(string); ref != n.GetText() {
-			t.Errorf("table node %q should carry its name as reference, got %q", n.GetText(), ref)
+		// SQLite has no databaseBrowser, so nodes are tables of the current db.
+		if ref, _ := n.GetReference().(tableRef); ref.name != n.GetText() || ref.db != "" {
+			t.Errorf("table node %q should carry tableRef{name}, got %+v", n.GetText(), n.GetReference())
 		}
 	}
 	if !got["users"] || !got["orders"] {

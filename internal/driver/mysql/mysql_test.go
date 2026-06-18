@@ -87,6 +87,24 @@ func TestMetadata(t *testing.T) {
 	if !containsFirstCol(t, dbs, "app") {
 		t.Error("Databases should include app")
 	}
+
+	// TablesIn lists tables of a *named* database (backs the TUI database→table
+	// tree). The test container's user only has rights on "app", so list that
+	// database by name and expect the widgets table created above — this still
+	// exercises the named-database code path (information_schema + db param).
+	browser, ok := conn.(interface {
+		TablesIn(context.Context, string) (driver.Rows, error)
+	})
+	if !ok {
+		t.Fatal("mysql conn should implement TablesIn")
+	}
+	inApp, err := browser.TablesIn(ctx, "app")
+	if err != nil {
+		t.Fatalf("TablesIn: %v", err)
+	}
+	if !containsFirstCol(t, inApp, "widgets") {
+		t.Error("TablesIn(app) should include widgets")
+	}
 }
 
 func containsFirstCol(t *testing.T, rows driver.Rows, want string) bool {
