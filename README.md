@@ -159,6 +159,9 @@ go test ./...          # also runs container-based PostgreSQL tests (needs Docke
 golangci-lint run
 ```
 
+For a full walkthrough of every command, output format, and the TUI, see the
+**[user manual (docs/MANUAL.md)](docs/MANUAL.md)**.
+
 See [docs/](docs/) for the plan ([PLAN.md](docs/PLAN.md)), task breakdown
 ([TASKS.md](docs/TASKS.md)), testing strategy ([TESTING.md](docs/TESTING.md)),
 and release/CI design ([RELEASE.md](docs/RELEASE.md)).
