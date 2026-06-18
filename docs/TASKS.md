@@ -315,14 +315,59 @@
 
 ## Backlog（未排期，按需）
 
-- **SSH Tunnel**（连接前建隧道）
-- **TLS 配置**（CA/客户端证书、`sslmode` 细化）
-- **AWS RDS IAM Auth**（临时 token 连接）
-- 更多数据库：ClickHouse / MongoDB（需评估非关系型对接口的冲击）
-- TUI 连接编辑/删除、跨库浏览（库→表 多级树）、结果导出
-- 运行期插件机制（plugin / wasm）— 仅当编译期抽象不够用时再评估
-- 数据导入导出（CSV/JSON 批量）
-- 历史/收藏的云同步与统计
+> 已细化「需要修改的内容」便于将来直接领取。标注 **架构影响**：✅=核心零改动（新增包/扩展配置即可）；⚠️=需小幅触碰连接编排或 Metadata 可选接口；🔴=需改核心抽象，开工前先做设计 spike。
+
+- [ ] **B-1 SSH Tunnel（连接前建隧道）** · ⚠️ · 预估 2–3d
+  - 目标：DB 在堡垒机后时，连接前先建 SSH 本地端口转发再连库。
+  - 需要修改：
+    - `internal/config/connection.go`：`ConnectionConfig` 增 `ssh:` 块（`ssh_host/ssh_port/ssh_user/ssh_key_path/ssh_key_ref(passphrase)/ssh_password_ref/known_hosts`）。
+    - 新增 `internal/tunnel/`：基于 `golang.org/x/crypto/ssh`（纯 Go，免 CGO）拨号堡垒机、开本地 listener 转发到远端 `host:port`，返回本地地址 + `Close()`。
+    - 连接编排（`cmd/s9l/main.go:resolveTarget` 与 `internal/tui` connect 路径）：若有 ssh 配置→先起隧道→把 DSN 的 host:port 改写为本地转发地址→`driver.Open`→连接关闭时拆隧道。**driver 接口不变**，仅在"打开连接"这层插入隧道（小幅触碰编排）。
+    - `internal/secret`：SSH 密码/私钥 passphrase 复用 `SecretStore`（`ssh_password_ref`/`ssh_key_ref`）。
+  - 关键考量/风险：**必须校验 known_hosts**（默认不盲信主机密钥）；支持私钥(含 passphrase)/密码/`ssh-agent` 三种认证；隧道生命周期绑定连接；IT 用容器化 sshd + db。
+- [ ] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
+  - 目标：比当前布尔 `ssl` 更细——CA 校验、客户端证书(mTLS)、各驱动 sslmode/tls 模式。
+  - 需要修改：
+    - `internal/config/connection.go`：增 `tls_ca/tls_cert/tls_key/tls_server_name/ssl_mode`（保留 `ssl: true` 向后兼容→等价 `require`）。
+    - DSN 构建：postgres 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql 用 `mysql.RegisterTLSConfig(name, *tls.Config)` 后 DSN 带 `tls=<name>`；sqlserver `encrypt`/`trustServerCertificate`。
+    - 可新增 `internal/config` 内小助手：由文件路径构建 `*tls.Config`。
+  - 关键考量/风险：默认推荐 `verify-full`；mysql 的 RegisterTLSConfig 是全局注册需在 Open 前调用；证书路径错误要清晰报错。
+- [ ] **B-3 AWS RDS IAM Auth（临时 token 连接）** · ⚠️ · 预估 2d
+  - 目标：用 IAM 生成 ~15 分钟临时 token 作为 RDS/Aurora(pg/mysql) 的密码。
+  - 需要修改：
+    - 认证模式：`password_ref` 增方案 `aws-rds-iam`（或连接字段 `auth: rds-iam` + `region`）。
+    - 新增 `internal/awsauth/`：用 AWS SDK Go v2 `feature/rds/auth.BuildAuthToken(ctx, endpoint, region, user, creds)` 在**连接时**生成 token（时效短，不长缓存）。
+    - 连接编排：auth=rds-iam 时即时取 token 当密码，并强制 TLS（RDS IAM 必须）。
+  - 关键考量/风险：**引入 AWS SDK 依赖较重**（纯 Go，不破坏 CGO 约束）；凭据链 env/instance-profile/SSO；token 仅握手时需要（长连接不受 TTL 影响）；真实连接需 AWS 环境→**手动验证**，单测只验 token 装配（fake creds）。
+- [ ] **B-4 ClickHouse 驱动** · ✅ · 预估 1.5d
+  - 目标：新增 ClickHouse（关系型、契合现有接口）。
+  - 需要修改：新增 `internal/driver/clickhouse/`（`github.com/ClickHouse/clickhouse-go/v2` 的 database/sql stdlib，纯 Go）；`[]byte`→string 归一化；Metadata 用 `system.tables`/`system.columns`/`system.databases`；config 加 clickhouse DSN 分支 + 注册。**核心零改动**（同 MySQL/SQL Server 模式）。
+  - 关键考量/风险：方言差异（`LIMIT` OK；类型多）下沉到 driver；testcontainers `clickhouse/clickhouse-server`。
+- [ ] **B-5 MongoDB（评估非关系型对接口的冲击）** · 🔴 · 预估：设计 spike 0.5d，落地大
+  - 目标：评估能否纳入文档型数据库。
+  - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。
+  - 决策点：先 spike 评估接口冲击与价值；很可能**暂不纳入**（s9l 定位 SQL 客户端），或仅做只读文档浏览。**开工前必须设计评审**。
+- [ ] **B-6 TUI 连接编辑/删除** · ✅ · 预估 1d
+  - 需要修改：扩展 Phase 3 的 `internal/tui/connform.go`——编辑(预填现有值)；Connections 面板 `d` 删除(确认浮层)→`config.Remove`+`Save`+`secret.Delete`(keychain 密码)；刷新列表。复用 config/secret，核心零改动。
+- [ ] **B-7 TUI 跨库浏览（库→表 多级树）** · ⚠️ · 预估 1.5d
+  - 目标：Schema 树从「单库表列表」升级为「库→表」多级（解决"未选默认库时看不到表"的痛点）。
+  - 需要修改：`internal/tui` Schema 树先 `Metadata.Databases()` 列库，展开某库再列其表；需要"按指定库列表"能力——给 `driver.Metadata` 增可选方法 `TablesIn(ctx, db)`（或树内跑带 schema 过滤的查询）。pg/mysql/sqlserver 各自实现（差异下沉 driver）。**Metadata 可选接口扩展**（向后兼容：未实现则回退当前库）。
+  - 关键考量：mysql 需 `USE`/限定库名，pg 走 `table_schema`，sqlserver 走三段名；保持向后兼容。
+- [ ] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
+  - 现状：CLI `s9l <conn> -e "..." --format csv > f` 已能导出。
+  - 需要修改：TUI Results 面板加 `e` 导出当前结果集到文件（CSV/JSON，**复用 `internal/render`**）；选路径/格式的小浮层。核心零改动。
+- [ ] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
+  - 目标：把 CSV/JSON 批量导入表。
+  - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
+  - 关键考量/风险：大文件流式读取、类型推断、冲突策略(skip/replace)、参数占位符按方言；IT 用 SQLite。
+- [ ] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
+  - 需要修改：`internal/history` 加聚合查询（按 SQL/连接 GROUP BY：高频查询 Top N、平均耗时、成功率、按连接计数）；`cmd/s9l/history.go` 加 `stats` 子命令渲染。只读本地 `history.db`，核心零改动。
+- [ ] **B-11 历史/收藏云同步** · 🔴 · 预估：设计 needed，大
+  - 目标：把 `history.db`/收藏同步到远端（git 仓库 / S3 / 同步端点）。
+  - 决策点：需选后端 + 认证 + **隐私设计**（历史含 SQL，可能含敏感信息）。建议**暂缓**，优先做 B-10 本地统计；如要做，先出设计与隐私评审。
+- [ ] **B-12 运行期插件机制（plugin / wasm）** · 🔴 · 预估：spike 2–3d，落地大
+  - 目标：运行时加载 driver（Go plugin 或 wasm），而非编译期注册。
+  - 决策点：当前**编译期 `Driver` 注册已满足"新增库只加一个 driver 文件"**目标；运行期插件带来 ABI 稳定性、安全沙箱（建议 `wazero` wasm 而非 Go plugin）等大复杂度与安全面。**仅当编译期抽象不够用时再评估**，先 spike。
 
 ---
 
