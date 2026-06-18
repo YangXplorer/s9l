@@ -7,9 +7,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/repl"
+	"github.com/YangXplorer/s9l/internal/schemacache"
 
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-isatty"
@@ -30,7 +32,15 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 	}
 	defer func() { _ = conn.Close() }()
 
-	lr, closeLR, err := newLineReader(in, newCompleter(ctx, conn))
+	// Persistent schema cache (best-effort): speeds up completion across
+	// sessions and keeps it usable if a live metadata lookup fails. Only named
+	// connections are cached; a bare DSN may embed a password.
+	store, _ := schemacache.OpenDefault()
+	if store != nil {
+		defer func() { _ = store.Close() }()
+	}
+
+	lr, closeLR, err := newLineReader(in, newCompleter(ctx, conn, store, namedConnID(target)))
 	if err != nil {
 		return err
 	}
@@ -48,6 +58,19 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 		return qerr
 	}
 	return repl.Loop(lr, errOut, exec)
+}
+
+// namedConnID returns target when it names a configured connection (a stable
+// id safe to use as a cache key), otherwise "" (bare DSN — not persisted).
+func namedConnID(target string) string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if _, ok := cfg.Get(target); ok {
+		return target
+	}
+	return ""
 }
 
 // newLineReader returns a readline-backed reader for an interactive terminal,
