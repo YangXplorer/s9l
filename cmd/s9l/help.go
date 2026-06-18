@@ -15,6 +15,7 @@ Usage:
   s9l conn    <list|add|rm>         manage named connections
   s9l history [--limit N]           show recent query history
   s9l saved   <add|list|search|rm|run>   manage and run saved queries
+  s9l saved   <folder|folders|mv>        organize saved queries in folders
   s9l help | --version
 
 Query flags:

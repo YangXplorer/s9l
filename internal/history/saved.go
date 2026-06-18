@@ -29,10 +29,10 @@ func (s *Store) SaveQuery(ctx context.Context, q SavedQuery) (int64, error) {
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO saved_queries
-		 (title, description, connection_id, database_name, sql_text, tags, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (title, description, connection_id, database_name, sql_text, tags, folder_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		q.Title, nullStr(q.Description), nullStr(q.ConnectionID), nullStr(q.DatabaseName),
-		q.SQL, nullStr(q.Tags), q.CreatedAt, q.UpdatedAt,
+		q.SQL, nullStr(q.Tags), nullInt64(q.FolderID), q.CreatedAt, q.UpdatedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("history: save query: %w", err)
@@ -80,7 +80,7 @@ func (s *Store) DeleteSaved(ctx context.Context, id int64) (bool, error) {
 }
 
 const savedSelect = `SELECT id, title, COALESCE(description,''), COALESCE(connection_id,''),
-	COALESCE(database_name,''), sql_text, COALESCE(tags,''), created_at, updated_at
+	COALESCE(database_name,''), sql_text, COALESCE(tags,''), COALESCE(folder_id,0), created_at, updated_at
 	FROM saved_queries`
 
 type rowScanner interface {
@@ -90,7 +90,7 @@ type rowScanner interface {
 func scanSaved(r rowScanner) (SavedQuery, error) {
 	var q SavedQuery
 	err := r.Scan(&q.ID, &q.Title, &q.Description, &q.ConnectionID, &q.DatabaseName,
-		&q.SQL, &q.Tags, &q.CreatedAt, &q.UpdatedAt)
+		&q.SQL, &q.Tags, &q.FolderID, &q.CreatedAt, &q.UpdatedAt)
 	return q, err
 }
 

@@ -200,7 +200,7 @@
 - [ ] **P2-2 自动补全**（REPL 内表名/列名补全，基于 Metadata 缓存）· 预估：2d
 - [ ] **P2-3 结果分页/翻页**（大结果交互式翻页或 pager 集成）· 预估：1d
 - [x] **P2-4 错误信息与帮助打磨**：`cmd/s9l/help.go` 顶层 `s9l help`/`-h`/`--help` 概览(用法/子命令 conn·history·saved·tui/查询 flags/凭据说明)；`\?` 帮助在 REPL/TUI 既有。错误已带 driver/上下文(既有)。白盒 `TestRunHelp`。· 预估：0.5d
-- [ ] **P2-5 query_folders 收藏分组**（建 `query_folders` 表，`saved_queries.folder_id` 关联）· 预估：0.5d
+- [x] **P2-5 query_folders 收藏分组**：`query_folders` 表(name UNIQUE) + `saved_queries.folder_id`(幂等 `ALTER TABLE ADD COLUMN`)；Store `CreateFolder`/`ListFolders`/`DeleteFolder`(删文件夹时把内含查询 `folder_id` 置空、不删查询)/`SetSavedFolder`/`ListSavedByFolder`(0=未归档)；CLI `s9l saved folder add|rm`、`saved folders`、`saved add --folder N`、`saved list --folder N`、`saved mv <id> --folder N`。白盒 `TestFolderCRUDAndAssignment`/`TestDeleteFolderUnfilesQueries` + CLI `TestSavedFolders`。核心零改动。· 预估：0.5d
 - [x] **P2-6 系统 Keychain（SecretStore.keychain 实现）**
   - 产出：`internal/secret/keychain.go`（`Keychain` 实现 SecretStore，基于 `zalando/go-keyring`；`Default()` 返回 keychain；`KeychainRef`/`ConnPasswordKey` 辅助）；`s9l conn add --password` 写入 keychain 并自动设 `password_ref`，`conn rm` 删除；`resolveTarget` 与 TUI 改用 `secret.Default()`；`keychain://` 解析复用既有 `Resolve`
   - DoD：`conn add --password` 存 keychain、config 仅留 ref、解析回连（白盒 `TestConnAddWithPasswordUsesKeychain`，用 go-keyring `MockInit`）✅；keychain 只在 `keychain://` ref 时触碰（env:/无密码连接无需 keyring 后端）✅；切换 memory→keychain 调用方不变（`SecretStore` 接口）✅
