@@ -67,6 +67,11 @@ type App struct {
 	theme     Theme
 	currentDB string // database selected in the Connections tree (drives Schema)
 
+	// Schema panel table list, retained so the table filter can re-render.
+	schemaTables []string
+	schemaFilter string
+	filterSchema bool // the open filter input targets Schema (vs Results)
+
 	focusIdx     int
 	helpOpen     bool
 	historyOpen  bool
@@ -247,7 +252,7 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             connect + list databases · pick database · preview table
   n / e / d         new / edit / delete connection
   F5                run SQL editor
-  /                 filter results
+  /                 filter (Schema: tables · Results: rows)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
@@ -690,26 +695,49 @@ func (a *App) applyFilter(term string) {
 // showFilter opens the Results filter input (/). Typing filters live; Enter
 // keeps the filter, Esc clears it.
 func (a *App) showFilter() {
-	if len(a.lastData) == 0 {
-		a.SetStatus("no results to filter")
-		return
+	// Target the focused panel: the Schema table list, otherwise the Results.
+	a.filterSchema = a.focusIdx == 1
+	var (
+		title    string
+		initial  string
+		onChange func(string)
+	)
+	if a.filterSchema {
+		if len(a.schemaTables) == 0 {
+			a.SetStatus("no tables to filter")
+			return
+		}
+		title = " Filter tables — Enter: keep · Esc: clear "
+		initial = a.schemaFilter
+		onChange = a.applySchemaFilter
+	} else {
+		if len(a.lastData) == 0 {
+			a.SetStatus("no results to filter")
+			return
+		}
+		title = " Filter results — Enter: keep · Esc: clear "
+		initial = a.filter
+		onChange = a.applyFilter
 	}
-	in := tview.NewInputField().SetLabel(" / ").SetText(a.filter)
-	in.SetChangedFunc(a.applyFilter)
-	in.SetBorder(true).SetTitle(" Filter — Enter: keep · Esc: clear ").
-		SetBorderColor(a.theme.Focus)
+	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
+	in.SetChangedFunc(onChange)
+	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
 	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
 	a.app.SetFocus(in)
 	a.filterOpen = true
 }
 
-// hideFilter closes the filter overlay. When clear is true the filter is reset
-// and the full result set restored.
+// hideFilter closes the filter overlay. When clear is true the active filter is
+// reset (restoring the full table or result set).
 func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
 	if clear {
-		a.applyFilter("")
+		if a.filterSchema {
+			a.applySchemaFilter("")
+		} else {
+			a.applyFilter("")
+		}
 	}
 	a.app.SetFocus(a.navPanels()[a.focusIdx])
 }
@@ -765,23 +793,19 @@ func quoteIdent(driverName, name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// loadSchema fills the Schema panel with the tables of the current database:
-// the one picked in the Connections tree (currentDB) for multi-database engines,
-// otherwise the connection's own database. Selecting a table previews it.
+// loadSchema fetches the tables of the current database — the one picked in the
+// Connections tree (currentDB) for multi-database engines, otherwise the
+// connection's own database — and renders them (clearing any table filter).
 func (a *App) loadSchema() {
 	if a.conn == nil {
 		return
 	}
-	label := a.connID
-	if a.currentDB != "" {
-		label = a.currentDB
-	}
-	root := tview.NewTreeNode(label).SetColor(a.theme.Accent)
-	a.schema.SetRoot(root).SetCurrentNode(root)
+	a.schemaFilter = ""
+	a.schemaTables = nil
 
 	md, ok := a.conn.(driver.Metadata)
 	if !ok {
-		root.AddChild(tview.NewTreeNode("(driver has no metadata)"))
+		a.schemaPlaceholder("driver has no metadata")
 		return
 	}
 	var (
@@ -797,14 +821,57 @@ func (a *App) loadSchema() {
 		a.setError("list tables: " + err.Error())
 		return
 	}
-	for _, name := range tables {
+	a.schemaTables = tables
+	a.renderSchema()
+}
+
+// renderSchema (re)builds the Schema tree from the retained table list, applying
+// the active table filter. Selecting a table previews it.
+func (a *App) renderSchema() {
+	label := a.connID
+	if a.currentDB != "" {
+		label = a.currentDB
+	}
+	root := tview.NewTreeNode(label).SetColor(a.theme.Accent)
+	a.schema.SetRoot(root).SetCurrentNode(root)
+	for _, name := range filterTables(a.schemaTables, a.schemaFilter) {
 		root.AddChild(tview.NewTreeNode(name).SetReference(tableRef{db: a.currentDB, name: name}))
 	}
 }
 
+// filterTables keeps the names containing term (case-insensitive); an empty term
+// returns all names.
+func filterTables(names []string, term string) []string {
+	if term == "" {
+		return names
+	}
+	lower := strings.ToLower(term)
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if strings.Contains(strings.ToLower(n), lower) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// applySchemaFilter re-renders the Schema tree with tables matching term and
+// reports the match count.
+func (a *App) applySchemaFilter(term string) {
+	a.schemaFilter = term
+	a.renderSchema()
+	if term == "" {
+		a.SetStatus(fmt.Sprintf("%d tables", len(a.schemaTables)))
+	} else {
+		a.SetStatus(fmt.Sprintf("tables %d/%d", len(filterTables(a.schemaTables, term)), len(a.schemaTables)))
+	}
+}
+
 // schemaPlaceholder shows a one-line hint in the Schema panel (e.g. before a
-// database is chosen).
+// database is chosen) and clears the retained table list.
 func (a *App) schemaPlaceholder(msg string) {
+	a.schemaTables = nil
+	a.schemaFilter = ""
 	root := tview.NewTreeNode(a.connID).SetColor(a.theme.Accent)
 	root.AddChild(tview.NewTreeNode("(" + msg + ")"))
 	a.schema.SetRoot(root).SetCurrentNode(root)

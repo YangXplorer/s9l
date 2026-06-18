@@ -117,6 +117,48 @@ func TestLoadConnDatabases(t *testing.T) {
 	}
 }
 
+func TestFilterTables(t *testing.T) {
+	names := []string{"users", "orders", "order_items", "products"}
+	if got := filterTables(names, ""); len(got) != 4 {
+		t.Errorf("empty term should return all, got %d", len(got))
+	}
+	// Case-insensitive substring across the list.
+	got := filterTables(names, "ORDER")
+	if len(got) != 2 || got[0] != "orders" || got[1] != "order_items" {
+		t.Errorf("filter ORDER = %v, want [orders order_items]", got)
+	}
+	if got := filterTables(names, "zzz"); len(got) != 0 {
+		t.Errorf("no match should be empty, got %v", got)
+	}
+}
+
+func TestApplySchemaFilterRerenders(t *testing.T) {
+	a := newBrowserApp()
+	a.currentDB = "app"
+	a.loadSchema() // app → users, orders
+	if got := len(a.schema.GetRoot().GetChildren()); got != 2 {
+		t.Fatalf("schema tables = %d, want 2", got)
+	}
+	a.applySchemaFilter("user")
+	kids := a.schema.GetRoot().GetChildren()
+	if len(kids) != 1 || kids[0].GetText() != "users" {
+		t.Fatalf("after filter user = %v, want [users]", nodeTexts(kids))
+	}
+	// Clearing restores the full list.
+	a.applySchemaFilter("")
+	if got := len(a.schema.GetRoot().GetChildren()); got != 2 {
+		t.Errorf("after clear = %d, want 2", got)
+	}
+}
+
+func nodeTexts(nodes []*tview.TreeNode) []string {
+	out := make([]string, len(nodes))
+	for i, n := range nodes {
+		out[i] = n.GetText()
+	}
+	return out
+}
+
 // Schema panel: with a database picked (currentDB), it lists that database's
 // tables (via TablesIn), each a db-qualified tableRef.
 func TestLoadSchemaForCurrentDB(t *testing.T) {
