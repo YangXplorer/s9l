@@ -8,6 +8,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/secret"
+
+	"github.com/zalando/go-keyring"
 )
 
 // noInput is an empty stdin for tests that do not exercise the REPL.
@@ -152,6 +157,43 @@ func TestRunVersion(t *testing.T) {
 func TestRunMissingDSN(t *testing.T) {
 	if err := run(nil, noInput(), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error when target is missing")
+	}
+}
+
+func TestConnAddWithPasswordUsesKeychain(t *testing.T) {
+	keyring.MockInit() // in-memory keychain; no real OS keychain I/O
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if err := run([]string{"conn", "add", "--id", "pg", "--driver", "postgres",
+		"--host", "h", "--user", "u", "--database", "d", "--password", "sekret"},
+		noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("conn add: %v", err)
+	}
+
+	// config.yaml stores only the keychain ref, never the plaintext password.
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cc, ok := cfg.Get("pg")
+	if !ok {
+		t.Fatal("connection pg not saved")
+	}
+	if cc.PasswordRef != secret.KeychainRef("pg") {
+		t.Errorf("password_ref = %q, want %q", cc.PasswordRef, secret.KeychainRef("pg"))
+	}
+	// The password lives in the keychain and resolves back.
+	got, err := secret.Resolve(secret.Default(), cc.PasswordRef)
+	if err != nil || got != "sekret" {
+		t.Fatalf("resolve = %q, %v; want sekret, nil", got, err)
+	}
+
+	// conn rm also removes the keychain secret.
+	if err := run([]string{"conn", "rm", "pg"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("conn rm: %v", err)
+	}
+	if _, err := secret.Default().Get(secret.Service, secret.ConnPasswordKey("pg")); err != secret.ErrNotFound {
+		t.Errorf("keychain secret should be gone after rm, got err=%v", err)
 	}
 }
 

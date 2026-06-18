@@ -74,8 +74,19 @@ connections:
 secret instead:
 
 - `env:NAME` — read from environment variable `NAME` (e.g. `env:PGPASSWORD`).
-- `keychain://s9l/<key>` — read from a secret store (in-memory in v0.1; system
-  keychain planned for v0.2).
+- `keychain://s9l/<key>` — read from the OS keychain (macOS Keychain, Windows
+  Credential Manager, Linux Secret Service).
+
+Store a password in the keychain when adding a connection — `password_ref` is set
+for you, and the plaintext never touches `config.yaml`:
+
+```bash
+s9l conn add --id pg --driver postgres --host localhost --user dev \
+    --database app --password 'your-password'
+```
+
+(Passing `--password` on the command line can leak into shell history; for CI or
+scripts prefer `--password-ref env:PGPASSWORD`.)
 
 Manage connections with `s9l conn add|list|rm`.
 
