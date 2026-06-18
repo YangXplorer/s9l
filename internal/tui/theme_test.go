@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 func TestThemeBorderFocus(t *testing.T) {
@@ -51,6 +52,18 @@ func TestFocusPanelSetsBorderColors(t *testing.T) {
 	}
 	if a.connList.GetBorderColor() != a.theme.Border {
 		t.Errorf("unfocused Connections border = %v, want %v", a.connList.GetBorderColor(), a.theme.Border)
+	}
+}
+
+func TestApplyStylesUsesTerminalBackground(t *testing.T) {
+	// New must point tview's global background/foreground at the terminal
+	// default so the UI blends in like lazygit (not a solid black box).
+	_ = New(Options{Config: sqliteCfg("demo", "x.db")})
+	if tview.Styles.PrimitiveBackgroundColor != tcell.ColorDefault {
+		t.Errorf("PrimitiveBackgroundColor = %v, want ColorDefault", tview.Styles.PrimitiveBackgroundColor)
+	}
+	if tview.Styles.PrimaryTextColor != tcell.ColorDefault {
+		t.Errorf("PrimaryTextColor = %v, want ColorDefault", tview.Styles.PrimaryTextColor)
 	}
 }
 

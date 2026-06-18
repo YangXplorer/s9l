@@ -156,8 +156,9 @@ with Esc.
 | `q` / `Ctrl-C` | quit |
 
 The TUI uses a lazygit-style theme (numbered, rounded panels; the focused
-panel is highlighted; a shortcut bar sits at the bottom). Set `NO_COLOR` to
-disable colors. The Connections panel shows a per-database icon next to each
+panel is highlighted; a shortcut bar sits at the bottom) and inherits your
+terminal's background so it blends in like lazygit. Set `NO_COLOR` to disable
+colors. The Connections panel shows a per-database icon next to each
 name; icons default to short ASCII tags (`[pg]`, `[my]`, `[sq]`, `[ms]`) — set
 `S9L_TUI_ICONS=nerd` for Nerd Font glyphs, or `S9L_TUI_ICONS=off` to hide them.
 

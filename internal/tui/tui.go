@@ -111,6 +111,7 @@ func New(opts Options) *App {
 	}
 
 	a.theme = newTheme()
+	a.theme.applyStyles()
 	useRoundedBorders()
 	a.buildLayout()
 	a.populateConnections()

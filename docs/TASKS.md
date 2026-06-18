@@ -318,11 +318,10 @@
 预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
 > 模型调整：把「数据库」层从 Schema 面板（B-7 的库→表树）上移到 **Connections 面板**（连接→数据库可展开），**Schema 面板只显示所选数据库的表**并支持检索。这取代/调整 B-7 在 Schema 内的库层级，更贴合用户期望的 lazygit 式层次。
 
-- [ ] **T4-1 背景色与 lazygit 一致（终端默认背景）**
-  - 目标：TUI 背景跟随终端自身配色（lazygit 即用终端默认背景/透明），不强制某背景色——解决 s9l 当前背景与终端/lazygit 不一致的观感。
-  - 需要修改：`internal/tui` App 初始化设 `tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault`（及 `ContrastBackgroundColor`/`MoreContrastBackgroundColor`/`BorderColor`/`PrimaryTextColor` 等 `tview.Styles` 字段为 Default 或主题色），让面板/浮层/列表背景透传终端；与 `theme.go`/`NO_COLOR` 协调；必要时调整文字色保证默认背景上可读。
-  - DoD：TUI 背景与所在终端一致（与 lazygit 并排对比一致）；浮层/选中行/键位栏在默认背景上清晰可读；白盒断言 Styles 设置 + 真实 pty 目视核对。
-  - 依赖：T3-1 · 预估：0.5d · 注：`tview.Styles` 为全局，统一在 `New` 设置一次。
+- [x] **T4-1 背景色与 lazygit 一致（终端默认背景）**
+  - 产出：`theme.go` `applyStyles()`——设 `tview.Styles.PrimitiveBackgroundColor/PrimaryTextColor = ColorDefault`(面板/文字透传终端，像 lazygit)，`BorderColor/TitleColor/GraphicsColor/Secondary/Tertiary` 用主题色；`ContrastBackgroundColor`/`MoreContrast`/`Inverse` 保留 tview 默认以保证输入框/按钮/删除模态在透明背景上可见。`New` 中 buildLayout 前调用一次。
+  - DoD：白盒 `TestApplyStylesUsesTerminalBackground`(PrimitiveBackground/PrimaryText==ColorDefault) ✅；真实 pty——4 面板正常渲染、输出**无强制黑底 SGR `40m`**(终端默认背景透传，对比改动前满屏 `40m`) ✅；核心零改动。
+  - 依赖：T3-1 · 预估：0.5d
 - [ ] **T4-2 Connections 面板：连接 → 数据库（可展开）**
   - 目标：Connections 从扁平 List 改为可展开树：连接为根，连接成功后在其下展开该连接的**数据库列表**；选中某数据库即设为「当前数据库」并刷新 Schema 面板。
   - 需要修改：`internal/tui`——Connections 改 `tview.TreeView`（连接节点 + 数据库子节点）；`Enter` 连接节点=连接并加载其库（`Metadata.Databases()`，懒加载）；`Enter` 数据库节点=设 `a.currentDB` 并触发 `loadSchema`；图标(T3-2)/编辑删除(B-6)键位适配树结构（在连接节点上 `e`/`d`）；未连接的连接不展开。
