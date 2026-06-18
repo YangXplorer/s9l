@@ -388,8 +388,9 @@
   - 目标：把 CSV/JSON 批量导入表。
   - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
   - 关键考量/风险：大文件流式读取、类型推断、冲突策略(skip/replace)、参数占位符按方言；IT 用 SQLite。
-- [ ] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
-  - 需要修改：`internal/history` 加聚合查询（按 SQL/连接 GROUP BY：高频查询 Top N、平均耗时、成功率、按连接计数）；`cmd/s9l/history.go` 加 `stats` 子命令渲染。只读本地 `history.db`，核心零改动。
+- [x] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
+  - 产出：`internal/history/stats.go`——`Store.Stats(ctx, topN)` 聚合 query_history（总数/成功/失败/平均耗时；按连接计数；Top-N 高频查询含次数+平均耗时）；`cmd/s9l/history.go` `runHistory` 分派 `stats`→`runHistoryStats`（`--top`，渲染总览/按连接/高频查询）。只读本地 `history.db`，核心零改动。
+  - DoD：白盒 `TestStats`（总数/成功率/avg 取整/按连接排序/Top 查询 avg）、`TestStatsEmpty` ✅；CLI 实测输出正确 ✅；docs(README/MANUAL §3·§9) 同步 ✅。
 - [ ] **B-11 历史/收藏云同步** · 🔴 · 预估：设计 needed，大
   - 目标：把 `history.db`/收藏同步到远端（git 仓库 / S3 / 同步端点）。
   - 决策点：需选后端 + 认证 + **隐私设计**（历史含 SQL，可能含敏感信息）。建议**暂缓**，优先做 B-10 本地统计；如要做，先出设计与隐私评审。

@@ -10,8 +10,12 @@ import (
 	"github.com/YangXplorer/s9l/internal/history"
 )
 
-// runHistory implements `s9l history [--limit N]`, listing recent queries.
+// runHistory implements `s9l history [--limit N]` (recent queries) and
+// `s9l history stats` (aggregate statistics).
 func runHistory(args []string, out, errOut io.Writer) error {
+	if len(args) > 0 && args[0] == "stats" {
+		return runHistoryStats(args[1:], out, errOut)
+	}
 	fs := flag.NewFlagSet("s9l history", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	limit := fs.Int("limit", 20, "max entries to show (0 = all)")
@@ -42,6 +46,55 @@ func runHistory(args []string, out, errOut io.Writer) error {
 			e.ExecutedAt.Local().Format("2006-01-02 15:04:05"),
 			status, e.Duration.Milliseconds(), e.ConnectionID, singleLine(e.SQL)); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// runHistoryStats implements `s9l history stats [--top N]`: aggregate statistics
+// over recorded queries.
+func runHistoryStats(args []string, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("s9l history stats", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	top := fs.Int("top", 10, "number of most-frequent queries to show")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	store, err := history.OpenDefault()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	st, err := store.Stats(context.Background(), *top)
+	if err != nil {
+		return err
+	}
+	if st.Total == 0 {
+		_, err := fmt.Fprintln(out, "no query history")
+		return err
+	}
+
+	rate := float64(st.Succeeded) / float64(st.Total) * 100
+	_, _ = fmt.Fprintf(out, "queries: %d   ok: %d   err: %d   success: %.1f%%   avg: %dms\n",
+		st.Total, st.Succeeded, st.Failed, rate, st.AvgMs)
+
+	if len(st.ByConnection) > 0 {
+		_, _ = fmt.Fprintln(out, "\nby connection:")
+		for _, c := range st.ByConnection {
+			name := c.ConnectionID
+			if name == "" {
+				name = "(none)"
+			}
+			_, _ = fmt.Fprintf(out, "  %-20s %d\n", name, c.Count)
+		}
+	}
+
+	if len(st.TopQueries) > 0 {
+		_, _ = fmt.Fprintf(out, "\ntop %d queries:\n", len(st.TopQueries))
+		for _, q := range st.TopQueries {
+			_, _ = fmt.Fprintf(out, "  %4d×  %5dms  %s\n", q.Count, q.AvgMs, singleLine(q.SQL))
 		}
 	}
 	return nil
