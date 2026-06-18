@@ -43,8 +43,16 @@ type SavedQuery struct {
 	DatabaseName string
 	SQL          string
 	Tags         string
+	FolderID     int64 // 0 = unfiled
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// Folder groups saved queries.
+type Folder struct {
+	ID        int64
+	Name      string
+	CreatedAt time.Time
 }
 
 // DefaultPath returns the history.db path, honoring $XDG_CONFIG_HOME and
@@ -114,12 +122,53 @@ CREATE TABLE IF NOT EXISTS saved_queries (
     tags TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
+);
+CREATE TABLE IF NOT EXISTS query_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL
 );`
 
-// migrate creates tables if they do not exist. It is idempotent.
+// migrate creates tables if they do not exist and applies incremental column
+// additions. It is idempotent.
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("history: migrate: %w", err)
+	}
+	// saved_queries predates folders; add the column on existing databases.
+	if err := s.addColumnIfMissing("saved_queries", "folder_id",
+		"INTEGER REFERENCES query_folders(id)"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing runs ALTER TABLE ADD COLUMN only when the column is absent,
+// keeping migrate idempotent across re-opens.
+func (s *Store) addColumnIfMissing(table, column, def string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return fmt.Errorf("history: inspect %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, typ        string
+			dflt             any
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("history: scan %s info: %w", table, err)
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + def); err != nil {
+		return fmt.Errorf("history: add %s.%s: %w", table, column, err)
 	}
 	return nil
 }
@@ -173,4 +222,11 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+func nullInt64(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }

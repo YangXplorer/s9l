@@ -197,15 +197,15 @@
 预估合计：~5–6 人日
 
 - [x] **P2-1 MySQL 适配器**（`go-sql-driver/mysql`，纯 Go）— DoD：仅新增 `internal/driver/mysql/` + config mysql DSN 分支 + 注册，核心零改动 ✅；Metadata 用 information_schema（`?` 占位）✅；testcontainers(mysql:8.4) conformance+metadata 全 PASS ✅ · 预估：1d
-- [ ] **P2-2 自动补全**（REPL 内表名/列名补全，基于 Metadata 缓存）· 预估：2d
-- [ ] **P2-3 结果分页/翻页**（大结果交互式翻页或 pager 集成）· 预估：1d
-- [ ] **P2-4 错误信息与帮助打磨**（`s9l --help`/`\?`）· 预估：0.5d
-- [ ] **P2-5 query_folders 收藏分组**（建 `query_folders` 表，`saved_queries.folder_id` 关联）· 预估：0.5d
+- [x] **P2-2 自动补全**：REPL 内 `Tab` 补全 SQL 关键字 / 表名 / 列名。`internal/repl/complete.go` 终端无关核心(`Completer`+`Schema` 接口)：词前缀匹配、`\` 元命令、`table.column` 限定补全、当前语句中引用到的表自动纳入其列；`cmd/s9l/complete.go` `schemaCache`(基于 `driver.Metadata` 懒加载缓存表/列，含 nil 容错) + `readline.AutoCompleter` 适配器，仅 TTY 路径启用。白盒 `complete_test.go`(repl 核心 6 例 + cmd schemaCache 实 SQLite E2E)。核心 driver 层零改动。· 预估：2d
+- [x] **P2-3 结果分页/翻页**：TTY 输出经 `$PAGER` 分页(默认 `less -FIRX`，单屏内直接打印)。`cmd/s9l/pager.go`：`pagerArgs`(S9L_PAGER 覆盖 PAGER、空值禁用、默认 less)、`maybePager`(仅 *os.File 终端启用，返回 pipe+finish，否则原样直通)、`isBrokenPipe`(用户提前退出 pager 的 EPIPE 视为正常)。`runStatementPaged` 包裹 `-e`/REPL/`saved run` 渲染；`--no-pager` flag 禁用。非 TTY(管道/脚本/测试)绝不分页。白盒 `pager_test.go`(参数解析 7 例 + 非 TTY 直通 + 禁用 + EPIPE)。核心 driver 层零改动。· 预估：1d
+- [x] **P2-4 错误信息与帮助打磨**：`cmd/s9l/help.go` 顶层 `s9l help`/`-h`/`--help` 概览(用法/子命令 conn·history·saved·tui/查询 flags/凭据说明)；`\?` 帮助在 REPL/TUI 既有。错误已带 driver/上下文(既有)。白盒 `TestRunHelp`。· 预估：0.5d
+- [x] **P2-5 query_folders 收藏分组**：`query_folders` 表(name UNIQUE) + `saved_queries.folder_id`(幂等 `ALTER TABLE ADD COLUMN`)；Store `CreateFolder`/`ListFolders`/`DeleteFolder`(删文件夹时把内含查询 `folder_id` 置空、不删查询)/`SetSavedFolder`/`ListSavedByFolder`(0=未归档)；CLI `s9l saved folder add|rm`、`saved folders`、`saved add --folder N`、`saved list --folder N`、`saved mv <id> --folder N`。白盒 `TestFolderCRUDAndAssignment`/`TestDeleteFolderUnfilesQueries` + CLI `TestSavedFolders`。核心零改动。· 预估：0.5d
 - [x] **P2-6 系统 Keychain（SecretStore.keychain 实现）**
   - 产出：`internal/secret/keychain.go`（`Keychain` 实现 SecretStore，基于 `zalando/go-keyring`；`Default()` 返回 keychain；`KeychainRef`/`ConnPasswordKey` 辅助）；`s9l conn add --password` 写入 keychain 并自动设 `password_ref`，`conn rm` 删除；`resolveTarget` 与 TUI 改用 `secret.Default()`；`keychain://` 解析复用既有 `Resolve`
   - DoD：`conn add --password` 存 keychain、config 仅留 ref、解析回连（白盒 `TestConnAddWithPasswordUsesKeychain`，用 go-keyring `MockInit`）✅；keychain 只在 `keychain://` ref 时触碰（env:/无密码连接无需 keyring 后端）✅；切换 memory→keychain 调用方不变（`SecretStore` 接口）✅
   - 预估：1d · 注：真实 OS keychain 读写为手动验证（CI 用 MockInit，符合 TESTING.md 约定）；对话式密码输入后续
-- [ ] **P2-7 schema cache（可选）**（`~/.cache/s9l/schema.db`，缓存表/列元数据加速补全）· 预估：1d
+- [x] **P2-7 schema cache**：`internal/schemacache`(SQLite `~/.cache/s9l/schema.db`，遵循 `$XDG_CACHE_HOME`，0700/0600)，按 connection_id 存表/列名(`cached_tables`/`cached_columns`，列保序)。`schemaCache` 接入永续层：**live 优先 + 成功 write-through + live 失败时 disk 回退**(上次会话的 last-known schema)，跨会话/离线仍可补全。**仅名为连接缓存**(bare DSN 可能含密码 → connID="" 不持久化，遵守"不存明文密码")。白盒 schemacache 包测试(round-trip/replace/隔离/列序/迁移幂等) + cmd write-through/fallback 集成测试。核心 driver 层零改动。· 预估：1d
 - [x] **P2-8 发布渠道扩展（Homebrew）**：建 `YangXplorer/homebrew-tap`；`.goreleaser.yaml` 加 `homebrew_casks`(非 deprecated, 含 quarantine 清除 hook)；`release.yml` 传 `HOMEBREW_TAP_TOKEN`(已设为 repo secret)；README 加 `brew install YangXplorer/tap/s9l`。`goreleaser check` 干净、snapshot 生成 cask。首个 tag(>= 下次发布)推送 formula 后 brew 可用。· 预估：0.5d · 注：install.sh 留后续
 
 **Phase 2 验收**：新增 MySQL 不触碰核心层；补全/分页可用；密码进系统 Keychain；config.yaml 无明文密码；`brew install` 可用。

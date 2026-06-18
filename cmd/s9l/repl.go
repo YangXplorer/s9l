@@ -7,9 +7,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/repl"
+	"github.com/YangXplorer/s9l/internal/schemacache"
 
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-isatty"
@@ -19,7 +21,7 @@ const replPrompt = "s9l> "
 
 // runREPL opens the connection once and runs the interactive loop, reusing the
 // connection for every statement and recording each in history.
-func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, driverFlag string, opts render.Options, timeout time.Duration) error {
+func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, driverFlag string, opts render.Options, timeout time.Duration, usePager bool) error {
 	drv, dsn, err := resolveTarget(target, driverFlag)
 	if err != nil {
 		return err
@@ -30,7 +32,15 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 	}
 	defer func() { _ = conn.Close() }()
 
-	lr, closeLR, err := newLineReader(in)
+	// Persistent schema cache (best-effort): speeds up completion across
+	// sessions and keeps it usable if a live metadata lookup fails. Only named
+	// connections are cached; a bare DSN may embed a password.
+	store, _ := schemacache.OpenDefault()
+	if store != nil {
+		defer func() { _ = store.Close() }()
+	}
+
+	lr, closeLR, err := newLineReader(in, newCompleter(ctx, conn, store, namedConnID(target)))
 	if err != nil {
 		return err
 	}
@@ -42,7 +52,7 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 		qctx, cancel := queryContext(ctx, timeout)
 		defer cancel()
 		start := time.Now()
-		rowCount, qerr := runStatement(qctx, out, conn, sql, opts)
+		rowCount, qerr := runStatementPaged(qctx, out, conn, sql, opts, usePager)
 		qerr = classifyErr(qerr, timeout)
 		recordHistory(errOut, target, sql, time.Since(start), rowCount, qerr)
 		return qerr
@@ -50,15 +60,30 @@ func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, d
 	return repl.Loop(lr, errOut, exec)
 }
 
+// namedConnID returns target when it names a configured connection (a stable
+// id safe to use as a cache key), otherwise "" (bare DSN — not persisted).
+func namedConnID(target string) string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if _, ok := cfg.Get(target); ok {
+		return target
+	}
+	return ""
+}
+
 // newLineReader returns a readline-backed reader for an interactive terminal,
-// otherwise a scanner over in (pipes, tests).
-func newLineReader(in io.Reader) (repl.LineReader, func(), error) {
+// otherwise a scanner over in (pipes, tests). completer wires Tab completion on
+// the terminal path; it is ignored for the scanner path.
+func newLineReader(in io.Reader, completer readline.AutoCompleter) (repl.LineReader, func(), error) {
 	if f, ok := in.(*os.File); ok && isatty.IsTerminal(f.Fd()) {
 		rl, err := readline.NewEx(&readline.Config{
 			Prompt:          replPrompt,
 			InterruptPrompt: "^C",
 			EOFPrompt:       `\q`,
 			Stdin:           f,
+			AutoComplete:    completer,
 		})
 		if err != nil {
 			return nil, func() {}, err

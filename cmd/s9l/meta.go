@@ -19,6 +19,19 @@ func runStatement(ctx context.Context, out io.Writer, conn driver.Conn, stmt str
 	return execute(ctx, out, conn, stmt, opts)
 }
 
+// runStatementPaged runs a statement with output routed through the pager when
+// usePager is set and out is a terminal. A broken-pipe error (user quit the
+// pager early) is treated as success.
+func runStatementPaged(ctx context.Context, out io.Writer, conn driver.Conn, stmt string, opts render.Options, usePager bool) (int, error) {
+	w, finish := maybePager(out, usePager)
+	n, err := runStatement(ctx, w, conn, stmt, opts)
+	finish()
+	if isBrokenPipe(err) {
+		err = nil
+	}
+	return n, err
+}
+
 // runMeta handles backslash meta-commands by calling the driver's Metadata
 // capability and rendering the result like any query.
 func runMeta(ctx context.Context, out io.Writer, conn driver.Conn, line string, opts render.Options) (int, error) {

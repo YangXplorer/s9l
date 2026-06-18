@@ -160,6 +160,21 @@ func TestRunMissingDSN(t *testing.T) {
 	}
 }
 
+func TestRunHelp(t *testing.T) {
+	for _, arg := range []string{"help", "--help", "-h"} {
+		var out strings.Builder
+		if err := run([]string{arg}, noInput(), &out, io.Discard); err != nil {
+			t.Fatalf("run %q: %v", arg, err)
+		}
+		s := out.String()
+		for _, want := range []string{"Usage:", "s9l tui", "s9l conn", "s9l saved", "--format", "--no-pager"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("help (%s) missing %q", arg, want)
+			}
+		}
+	}
+}
+
 func TestConnAddWithPasswordUsesKeychain(t *testing.T) {
 	keyring.MockInit() // in-memory keychain; no real OS keychain I/O
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -294,6 +309,63 @@ func TestSavedAddListSearchRunRm(t *testing.T) {
 	}
 	if err := run([]string{"saved", "rm", "1"}, noInput(), io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error removing missing saved query")
+	}
+}
+
+func TestSavedFolders(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// Create a folder; folders lists it.
+	if err := run([]string{"saved", "folder", "add", "reports"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("folder add: %v", err)
+	}
+	var folders strings.Builder
+	if err := run([]string{"saved", "folders"}, noInput(), &folders, io.Discard); err != nil {
+		t.Fatalf("folders: %v", err)
+	}
+	if !strings.Contains(folders.String(), "reports") {
+		t.Fatalf("folders missing reports:\n%s", folders.String())
+	}
+
+	// Add a query filed under folder 1, plus an unfiled one.
+	if err := run([]string{"saved", "add", "--title", "filed", "--sql", "select 1", "--folder", "1"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("saved add filed: %v", err)
+	}
+	if err := run([]string{"saved", "add", "--title", "loose", "--sql", "select 2"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("saved add loose: %v", err)
+	}
+
+	// list --folder 1 shows only the filed one.
+	var inFolder strings.Builder
+	if err := run([]string{"saved", "list", "--folder", "1"}, noInput(), &inFolder, io.Discard); err != nil {
+		t.Fatalf("list --folder: %v", err)
+	}
+	if !strings.Contains(inFolder.String(), "filed") || strings.Contains(inFolder.String(), "loose") {
+		t.Fatalf("list --folder 1 unexpected:\n%s", inFolder.String())
+	}
+
+	// mv the loose query (#2) into folder 1.
+	if err := run([]string{"saved", "mv", "2", "--folder", "1"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("saved mv: %v", err)
+	}
+	var unfiled strings.Builder
+	if err := run([]string{"saved", "list", "--folder", "0"}, noInput(), &unfiled, io.Discard); err != nil {
+		t.Fatalf("list --folder 0: %v", err)
+	}
+	if !strings.Contains(unfiled.String(), "no saved queries") {
+		t.Fatalf("expected no unfiled queries, got:\n%s", unfiled.String())
+	}
+
+	// Deleting the folder unfiles its queries (still present).
+	if err := run([]string{"saved", "folder", "rm", "1"}, noInput(), io.Discard, io.Discard); err != nil {
+		t.Fatalf("folder rm: %v", err)
+	}
+	var all strings.Builder
+	if err := run([]string{"saved", "list"}, noInput(), &all, io.Discard); err != nil {
+		t.Fatalf("saved list: %v", err)
+	}
+	if !strings.Contains(all.String(), "filed") || !strings.Contains(all.String(), "loose") {
+		t.Fatalf("queries lost after folder delete:\n%s", all.String())
 	}
 }
 
