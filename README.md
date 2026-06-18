@@ -143,7 +143,8 @@ it with F5. Queries run asynchronously and can be cancelled with Esc.
 | `Up`/`Down` · `j`/`k` | navigate within a panel |
 | `Enter` | connect (Connections) · preview table (Schema) |
 | `F5` | run the SQL editor |
-| `Esc` | cancel a running query |
+| `/` | filter the results (substring, any column) |
+| `Esc` | cancel a running query · clear the filter |
 | `Ctrl-R` | query history — `Enter` loads an entry into the editor |
 | `Ctrl-F` | saved queries — `Enter` runs the selected one |
 | `Ctrl-S` | save the editor's SQL as a favorite |

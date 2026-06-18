@@ -70,6 +70,12 @@ type App struct {
 	helpOpen    bool
 	historyOpen bool
 	savedOpen   bool
+	filterOpen  bool
+
+	// last result set, retained so the Results filter can re-render client-side.
+	lastCols []string
+	lastData [][]any
+	filter   string
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -190,7 +196,7 @@ func (a *App) keyBar() string {
 	open := a.theme.tag(a.theme.Accent) + "[::b]"
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
-		{"Tab", "panel"}, {"F5", "run"}, {"^R", "history"},
+		{"Tab", "panel"}, {"F5", "run"}, {"/", "filter"}, {"^R", "history"},
 		{"^F", "saved"}, {"^S", "save"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
@@ -206,7 +212,7 @@ func (a *App) keyBar() string {
 func (a *App) showHelp() {
 	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
 	help.SetBorder(true).SetTitle(" Help ")
-	a.pages.AddPage("help", centered(help, 46, 12), true, true)
+	a.pages.AddPage("help", centered(help, 46, 16), true, true)
 	a.helpOpen = true
 }
 
@@ -234,6 +240,7 @@ const helpText = `[::b]s9l TUI[::-]
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
   Enter             connect / preview table
   F5                run SQL editor
+  /                 filter results
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
@@ -342,7 +349,7 @@ func (a *App) runQuery(sql string) {
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
 			} else {
-				a.fillResults(res.cols, res.data)
+				a.setResults(res.cols, res.data)
 				a.recordHistory(sql, elapsed, len(res.data), nil)
 				a.SetStatus(fmt.Sprintf("%d rows · %s", len(res.data), elapsed.Round(time.Millisecond)))
 			}
@@ -527,6 +534,74 @@ func titleFrom(sql string) string {
 	return string(r)
 }
 
+// setResults stores a fresh result set (clearing any active filter) and renders
+// it. The retained copy lets the filter re-render client-side without re-querying.
+func (a *App) setResults(cols []string, data [][]any) {
+	a.lastCols = cols
+	a.lastData = data
+	a.filter = ""
+	a.fillResults(cols, data)
+}
+
+// filterRows keeps the rows where any cell contains term (case-insensitive). An
+// empty term returns data unchanged.
+func filterRows(data [][]any, term string) [][]any {
+	if term == "" {
+		return data
+	}
+	lower := strings.ToLower(term)
+	out := make([][]any, 0, len(data))
+	for _, row := range data {
+		for _, cell := range row {
+			if strings.Contains(strings.ToLower(cellString(cell)), lower) {
+				out = append(out, row)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// applyFilter re-renders the Results table with rows matching term and reports
+// the match count in the status bar.
+func (a *App) applyFilter(term string) {
+	a.filter = term
+	rows := filterRows(a.lastData, term)
+	a.fillResults(a.lastCols, rows)
+	if term == "" {
+		a.SetStatus(fmt.Sprintf("%d rows", len(a.lastData)))
+	} else {
+		a.SetStatus(fmt.Sprintf("filtered %d/%d", len(rows), len(a.lastData)))
+	}
+}
+
+// showFilter opens the Results filter input (/). Typing filters live; Enter
+// keeps the filter, Esc clears it.
+func (a *App) showFilter() {
+	if len(a.lastData) == 0 {
+		a.SetStatus("no results to filter")
+		return
+	}
+	in := tview.NewInputField().SetLabel(" / ").SetText(a.filter)
+	in.SetChangedFunc(a.applyFilter)
+	in.SetBorder(true).SetTitle(" Filter — Enter: keep · Esc: clear ").
+		SetBorderColor(a.theme.Focus)
+	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
+	a.app.SetFocus(in)
+	a.filterOpen = true
+}
+
+// hideFilter closes the filter overlay. When clear is true the filter is reset
+// and the full result set restored.
+func (a *App) hideFilter(clear bool) {
+	a.pages.RemovePage("filter")
+	a.filterOpen = false
+	if clear {
+		a.applyFilter("")
+	}
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
 // fillResults renders columns + rows into the Results table (header fixed).
 func (a *App) fillResults(cols []string, data [][]any) {
 	a.results.Clear()
@@ -630,6 +705,21 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
+	// While the filter input is open, Enter keeps the filter and Esc clears it;
+	// every other key (including j/k) is literal text for the input. Handled
+	// before vim-nav so typing isn't translated to arrows.
+	if a.filterOpen {
+		switch ev.Key() {
+		case tcell.KeyEnter:
+			a.hideFilter(false)
+			return nil
+		case tcell.KeyEscape:
+			a.hideFilter(true)
+			return nil
+		}
+		return ev
+	}
+
 	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
 	// editor (where they are text). Applies in panels and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
@@ -714,6 +804,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			return nil
 		case '1', '2', '3', '4':
 			a.focusPanel(int(ev.Rune() - '1'))
+			return nil
+		case '/':
+			a.showFilter()
 			return nil
 		}
 	}
