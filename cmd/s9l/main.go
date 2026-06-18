@@ -184,8 +184,9 @@ func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
 	if !ok {
 		return driverFlag, target, nil
 	}
-	// Phase 1 uses an in-memory secret store (env: refs work, keychain in P2).
-	password, err := secret.Resolve(secret.NewMemory(), cc.PasswordRef)
+	// Resolve via the OS keychain store (handles env: and keychain:// refs;
+	// the keychain is only touched for keychain:// refs).
+	password, err := secret.Resolve(secret.Default(), cc.PasswordRef)
 	if err != nil {
 		return "", "", fmt.Errorf("connection %q: %w", cc.ID, err)
 	}

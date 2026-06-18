@@ -105,7 +105,7 @@ type SecretStore interface {
 
 ### 分版落地（与 Phase 对齐）
 - **v0.1（≈ MVP / Phase 1）**：config.yaml 连接 + 密码起动时输入（不保存，`SecretStore=memory`）+ SQLite `query_history`/`saved_queries`
-- **v0.2（≈ Phase 2）**：系统 Keychain（`SecretStore=keychain`）+ schema cache
+- **v0.2+（Phase 2）**：系统 Keychain（`SecretStore=keychain`，✅ 已实现）+ schema cache（待）
 - **v0.3（≈ Phase 3）**：SSH Tunnel + TLS 配置 + AWS RDS IAM Auth
 
 ## 需求拆解

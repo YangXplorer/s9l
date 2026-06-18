@@ -22,7 +22,7 @@ s9l 是一个**终端数据库客户端**（快速连接数据库并进行数据
 - **语言：Go**。纯 Go 驱动、`CGO_ENABLED=0`（保证交叉编译与单二进制）。
 - **形态**：CLI/REPL（已交付）+ **全屏 TUI（lazygit 式，Phase T，一等交付，框架 `rivo/tview`）**。`s9l <id>` 进 REPL，`s9l <id> -e "SQL"` 单次执行（非 TTY 管道友好），`s9l tui [conn]` 进全屏界面。TUI 只新增 `internal/tui/` 展示层，复用 driver/config/secret/history，不改核心。详见 `docs/TUI.md`。
 - **配置**：`~/.config/s9l/config.yaml`（YAML，遵循 XDG，尊重 `$XDG_CONFIG_HOME`）。**绝不存明文密码**，只存 `password_ref`。
-- **凭据**：`SecretStore` 接口抽象。v0.1 用 `memory`（启动时输入，不落盘）；v0.2 接系统 Keychain（`zalando/go-keyring`）。
+- **凭据**：`SecretStore` 接口抽象。`memory`（内存）+ `keychain`（系统 Keychain，`zalando/go-keyring`，`secret.Default()`）已实现；`password_ref` 支持 `env:NAME` 与 `keychain://s9l/connection.<id>.password`；`conn add --password` 存 keychain。CI 用 go-keyring `MockInit`，真实 keychain 手动验证。
 - **历史/收藏**：SQLite `~/.config/s9l/history.db`（表 `query_history` / `saved_queries`，可选 `query_folders`）。
 - **可拓展性**：编译期 `Driver` 接口抽象 + 注册机制。**新增数据库只新增一个 driver 文件，不改核心层**。运行期插件进 Backlog。
 - **查询效率**：流式读取 rows（逐行消费，不全量进内存）、连接复用、大结果分页/截断。

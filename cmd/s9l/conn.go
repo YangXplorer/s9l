@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/secret"
 )
 
 // runConn dispatches the `s9l conn <list|add|rm>` subcommands.
@@ -64,19 +65,34 @@ func connAdd(args []string, errOut io.Writer) error {
 	fs.BoolVar(&c.SSL, "ssl", false, "use SSL/TLS")
 	fs.StringVar(&c.Charset, "charset", "", "charset")
 	fs.StringVar(&c.PasswordRef, "password-ref", "", "password reference, e.g. env:PGPASSWORD or keychain://s9l/connection.<id>.password")
+	password := fs.String("password", "", "store this password in the OS keychain (sets password_ref automatically)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if c.Driver == "" {
 		return errors.New("conn add: --driver is required")
 	}
+	if c.ID == "" {
+		return errors.New("conn add: --id is required")
+	}
+
+	// A given password is stored in the OS keychain (never in config.yaml); the
+	// connection references it via password_ref.
+	if *password != "" && c.PasswordRef == "" {
+		c.PasswordRef = secret.KeychainRef(c.ID)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	if err := cfg.Add(c); err != nil {
+	if err := cfg.Add(c); err != nil { // validates the id is unique before we touch the keychain
 		return err
+	}
+	if *password != "" {
+		if err := secret.Default().Set(secret.Service, secret.ConnPasswordKey(c.ID), *password); err != nil {
+			return fmt.Errorf("store password in keychain: %w", err)
+		}
 	}
 	return cfg.Save()
 }
@@ -92,5 +108,7 @@ func connRm(args []string) error {
 	if !cfg.Remove(args[0]) {
 		return fmt.Errorf("connection %q not found", args[0])
 	}
+	// Best-effort: drop any keychain password for this connection.
+	_ = secret.Default().Delete(secret.Service, secret.ConnPasswordKey(args[0]))
 	return cfg.Save()
 }
