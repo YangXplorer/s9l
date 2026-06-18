@@ -117,6 +117,11 @@ sessions and even when a live metadata lookup fails.
 Flags: `--format table|json|csv|tsv`, `--max-col-width N` (truncate table cells),
 `--timeout 30s` (abort a slow query). Press `Ctrl-C` to cancel a running query.
 
+On a terminal, large output is paged through `$PAGER` (default `less -FIRX`, so
+results that fit one screen print inline). Set `$PAGER`/`$S9L_PAGER` to choose a
+pager, or pass `--no-pager` (or `S9L_PAGER=`) to disable. Piped/non-TTY output is
+never paged, so scripts are unaffected.
+
 ## Terminal UI
 
 A full-screen, lazygit-style interface — connections, schema tree, results and a

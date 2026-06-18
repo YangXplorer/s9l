@@ -285,7 +285,7 @@ func savedRun(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runQuery(context.Background(), out, errOut, target, "sqlite", q.SQL, render.Options{Format: format}, 0)
+	return runQuery(context.Background(), out, errOut, target, "sqlite", q.SQL, render.Options{Format: format}, 0, true)
 }
 
 func printSaved(out io.Writer, items []history.SavedQuery) error {

@@ -24,6 +24,7 @@ Query flags:
   --format FMT        output: table | json | csv | tsv (TTY→table, pipe→tsv)
   --max-col-width N   truncate table cells to N runes (0 = unlimited)
   --timeout DUR       abort a query after DUR (e.g. 30s); Ctrl-C also cancels
+  --no-pager          do not page output through $PAGER on a terminal
 
 Connections live in ~/.config/s9l/config.yaml (never plaintext passwords —
 use --password to store in the OS keychain, or password_ref env:NAME).
