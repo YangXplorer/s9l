@@ -136,9 +136,9 @@ Panels: **Connections** (a tree of your configured connections) · **Schema** ·
 **Results** · **SQL editor**. On MySQL, pressing `Enter` on a connection connects
 and expands it to its **databases**; pick a database and the **Schema** panel
 lists that database's tables (handy when the connection has no default database).
-Other engines list the connected database's tables directly. Select a table to
-preview it, or write SQL and run it with F5. Queries run asynchronously and can
-be cancelled with Esc.
+Other engines list the connected database's tables directly. Press `/` in the
+Schema panel to filter table names. Select a table to preview it, or write SQL
+and run it with F5. Queries run asynchronously and can be cancelled with Esc.
 
 | Key | Action |
 |-----|--------|
@@ -148,7 +148,7 @@ be cancelled with Esc.
 | `Enter` | Connections: connect + list databases · pick a database · Schema: preview table |
 | `n` / `e` / `d` | add / edit / delete a connection (Connections panel; passwords in the keychain) |
 | `F5` | run the SQL editor |
-| `/` | filter the results (substring, any column) |
+| `/` | filter — Schema: table names · Results: rows (substring, case-insensitive) |
 | `Esc` | cancel a running query · clear the filter |
 | `Ctrl-R` | query history — `Enter` loads an entry into the editor |
 | `Ctrl-F` | saved queries — `Enter` runs the selected one |

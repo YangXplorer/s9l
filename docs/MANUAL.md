@@ -1,7 +1,7 @@
 # s9l 使用说明书
 
 > 终端数据库客户端。一条短命令连上数据库跑查询——简单、可脚本化、易扩展。
-> 当前支持数据库：**SQLite · PostgreSQL · MySQL**（纯 Go 驱动，单静态二进制，免 CGO）。
+> 当前支持数据库：**SQLite · PostgreSQL · MySQL · SQL Server**（纯 Go 驱动，单静态二进制，免 CGO）。
 > 本文覆盖 v0.5.0 的全部命令、输出形式、全屏 TUI 与配置。命令速查见 [README](../README.md)，路线图见 [PLAN.md](./PLAN.md)。
 
 ---
@@ -375,30 +375,31 @@ s9l tui          # 进界面后再选连接
 s9l tui pg       # 直接连上命名连接 pg
 ```
 
+界面使用**终端自身的背景色**（像 lazygit 一样融入终端）；面板带圆角、序号，聚焦面板高亮，底部是快捷键栏。设 `NO_COLOR` 关闭配色。
+
 ### 11.1 界面布局
 
 ```text
-┌─ Connections ────────┬─ Results ─────────────────────────────────┐
-│ pg   Dev Postgres    │ id | name  | email                        │
-│ my   shop@127.0.0.1  │ ---+-------+-------------------            │
-│ local  ./app.db      │  1 | Alice | alice@example.com            │
-│                      │  2 | Bob   |                              │
-├─ Schema ─────────────┤                                           │
-│ ▾ app                │                                           │
-│   • users            │                                           │
-│   • orders           ├─ SQL (F5 run) ────────────────────────────┤
-│   • products         │ select * from users limit 10;             │
-│                      │                                           │
+┌─[1] Connections ─────┬─[3] Results ──────────────────────────────┐
+│ ▾ [my] neohub        │ id | name  | email                        │
+│     app              │ ---+-------+-------------------            │
+│   ▸ logs             │  1 | Alice | alice@example.com            │
+│ ▸ [pg] dev           │  2 | Bob   |                              │
+├─[2] Schema ──────────┤                                           │
+│ /tbl: ord ── 2/18    │                                           │
+│   orders             ├─[4] SQL (F5 run) ─────────────────────────┤
+│   order_items        │ select * from orders                      │
+│                      │ limit 200;                                │
 └──────────────────────┴───────────────────────────────────────────┘
- [状态栏：当前连接 / 提示 / 错误信息]
+ [状态栏]  [快捷键栏：Tab panel  n new  / filter  ^R history  ? help  q quit]
 ```
 
 四个面板：
-- **Connections（左上）**：来自 `config.yaml` 的连接列表。`Enter` 连接选中项。
-- **Schema（左下）**：连接成功后展示「数据库 → 表」树。选中表 `Enter` 预览该表数据。
-- **Results（右上）**：查询/预览结果表格。
-- **SQL (F5 run)（右下）**：SQL 编辑器，写完按 `F5` 执行。
-- **状态栏（最底部）**：显示当前连接、操作提示、错误信息（连接失败等不会让界面崩溃，只进状态栏）。
+- **Connections（左上）**：`config.yaml` 里的连接树。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
+- **Schema（左下）**：当前所选数据库的**表列表**。`Enter` 预览选中表（自动按方言取前 200 行）。按 `/` **检索表名**（子串、大小写不敏感，状态栏显示 `tables M/N`）。
+- **Results（右上）**：查询/预览结果表格。按 `/` **过滤结果行**（跨列子串）。
+- **SQL (F5 run)（右下）**：SQL 编辑器，`F5` 执行。
+- **状态栏 + 快捷键栏（最底部两行）**：当前连接/库、行数/耗时、错误（连接失败等只进状态栏不崩溃）；下面一行常驻快捷键。
 
 ### 11.2 按键
 
@@ -407,21 +408,27 @@ s9l tui pg       # 直接连上命名连接 pg
 | `Tab` / `Shift-Tab` | 在面板间切换焦点 |
 | `1` / `2` / `3` / `4` | 跳到 Connections / Schema / Results / SQL 编辑器 |
 | `↑`/`↓` 或 `j`/`k` | 在当前面板内上下移动（编辑器内 `j`/`k` 是普通文本） |
-| `Enter` | Connections=连接；Schema=预览选中表 |
+| `Enter` | Connections=连接并展开数据库 / 选中数据库刷新 Schema；Schema=预览选中表 |
+| `n` / `e` / `d` | 在 Connections 面板：新增 / 编辑 / 删除连接（密码存系统 keychain） |
+| `/` | 检索：Schema 聚焦时过滤**表名**，否则过滤**结果行**（`Enter` 保留、`Esc` 清空） |
 | `F5` | 执行 SQL 编辑器里的语句 |
-| `Esc` | 取消正在执行的查询 |
+| `Esc` | 取消正在执行的查询 / 关闭浮层 / 清空过滤 |
 | `Ctrl-R` | 打开查询历史；`Enter` 把选中项**载入编辑器** |
 | `Ctrl-F` | 打开收藏查询；`Enter` 直接**运行**选中项 |
 | `Ctrl-S` | 把编辑器里的 SQL **存为收藏** |
 | `?` | 显示/关闭帮助浮层 |
 | `q` / `Ctrl-C` | 退出 TUI |
 
-### 11.3 典型操作流
-1. `s9l tui` 进界面 → 在 Connections 选连接按 `Enter`。
-2. 焦点切到 Schema（`2` 或 `Tab`），选表 `Enter` 预览，或
-3. 切到 SQL 编辑器（`4`），输入 SQL，`F5` 运行，结果显示在 Results。
-4. `Ctrl-R` 调历史、`Ctrl-F` 跑收藏、`Ctrl-S` 存收藏。
-5. 查询太久用 `Esc` 取消；`q` 退出。
+### 11.3 在界面里管理连接
+- `n` 打开「新增连接」表单（id/name/driver 下拉/host/port/user/database/ssl/password 或 password-ref）；填好 **Save** 即写入 `config.yaml`，填了密码则存入系统 keychain（配置只留引用）。
+- `e` 编辑选中连接（预填；密码留空=保留原引用）；`d` 删除（确认弹窗，连同 keychain 密码）。
+
+### 11.4 典型操作流
+1. `s9l tui neohub-dev` 进界面（自动连接）。
+2. MySQL：Connections 下展开出数据库，选一个库（`Enter`）→ Schema 列出该库的表；单库引擎直接出表。
+3. 焦点切到 Schema（`2`），需要时按 `/` 检索表名，选表 `Enter` 预览到 Results。
+4. 或切到 SQL 编辑器（`4`），写 SQL，`F5` 运行；结果里按 `/` 过滤行。
+5. `Ctrl-R` 调历史、`Ctrl-F` 跑收藏、`Ctrl-S` 存收藏；查询太久 `Esc` 取消；`q` 退出。
 
 > 查询在后台异步执行，期间界面不卡顿，可用 `Esc` 取消。
 
@@ -446,6 +453,8 @@ s9l tui pg       # 直接连上命名连接 pg
 | `XDG_CACHE_HOME` | 缓存目录根（默认 `~/.cache`） |
 | `PAGER` | 分页器命令（默认 `less -FIRX`） |
 | `S9L_PAGER` | 覆盖 `PAGER`；设为空值则禁用分页 |
+| `NO_COLOR` | 关闭 TUI 配色（背景/文字用终端默认） |
+| `S9L_TUI_ICONS` | TUI 连接图标：默认 ASCII 标签；`nerd`=Nerd Font 字形；`off`=不显示 |
 | `password_ref` 里的 `env:NAME` | 提供数据库密码的环境变量 |
 
 ---
