@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/YangXplorer/s9l/internal/history"
+	"github.com/YangXplorer/s9l/internal/secret"
 	"github.com/YangXplorer/s9l/internal/tui"
 )
 
@@ -13,7 +14,7 @@ func runTUI(args []string) error {
 	if len(args) > 0 {
 		conn = args[0]
 	}
-	opts := tui.Options{Conn: conn}
+	opts := tui.Options{Conn: conn, Store: secret.Default()}
 	if h, err := history.OpenDefault(); err == nil {
 		opts.History = h
 		defer func() { _ = h.Close() }()

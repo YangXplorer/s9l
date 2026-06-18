@@ -201,10 +201,10 @@
 - [ ] **P2-3 结果分页/翻页**（大结果交互式翻页或 pager 集成）· 预估：1d
 - [ ] **P2-4 错误信息与帮助打磨**（`s9l --help`/`\?`）· 预估：0.5d
 - [ ] **P2-5 query_folders 收藏分组**（建 `query_folders` 表，`saved_queries.folder_id` 关联）· 预估：0.5d
-- [ ] **P2-6 系统 Keychain（SecretStore.keychain 实现）**
-  - 产出：`internal/secret/keychain.go`，基于 `zalando/go-keyring`；`password_ref: keychain://s9l/connection.<id>.password` 解析；`s9l conn add` 时写入 keychain
-  - DoD：macOS/Windows/Linux 三平台密码可存取；切换 memory→keychain 不改调用方
-  - 预估：1d
+- [x] **P2-6 系统 Keychain（SecretStore.keychain 实现）**
+  - 产出：`internal/secret/keychain.go`（`Keychain` 实现 SecretStore，基于 `zalando/go-keyring`；`Default()` 返回 keychain；`KeychainRef`/`ConnPasswordKey` 辅助）；`s9l conn add --password` 写入 keychain 并自动设 `password_ref`，`conn rm` 删除；`resolveTarget` 与 TUI 改用 `secret.Default()`；`keychain://` 解析复用既有 `Resolve`
+  - DoD：`conn add --password` 存 keychain、config 仅留 ref、解析回连（白盒 `TestConnAddWithPasswordUsesKeychain`，用 go-keyring `MockInit`）✅；keychain 只在 `keychain://` ref 时触碰（env:/无密码连接无需 keyring 后端）✅；切换 memory→keychain 调用方不变（`SecretStore` 接口）✅
+  - 预估：1d · 注：真实 OS keychain 读写为手动验证（CI 用 MockInit，符合 TESTING.md 约定）；对话式密码输入后续
 - [ ] **P2-7 schema cache（可选）**（`~/.cache/s9l/schema.db`，缓存表/列元数据加速补全）· 预估：1d
 - [ ] **P2-8 发布渠道扩展**（启用 goreleaser Homebrew tap + `install.sh` + 配 `HOMEBREW_TAP_TOKEN`；建空仓库 `YangXplorer/homebrew-tap`）· 预估：0.5d · 详见 [RELEASE.md](./RELEASE.md)
 
