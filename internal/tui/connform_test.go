@@ -40,7 +40,7 @@ func TestSaveConnectionPersistsAndRefreshes(t *testing.T) {
 	if _, ok := a.cfg.Get("local"); !ok {
 		t.Error("connection not added to config")
 	}
-	main, _ := a.connList.GetItemText(0)
+	main := a.connTree.GetRoot().GetChildren()[0].GetText()
 	if main == "" || main == "(no connections — press n to add)" {
 		t.Errorf("connections list not refreshed: %q", main)
 	}
@@ -201,7 +201,7 @@ func TestSelectedConn(t *testing.T) {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	a.connList.SetCurrentItem(1) // "b"
+	a.connTree.SetCurrentNode(a.connTree.GetRoot().GetChildren()[1]) // "b"
 	cc, ok := a.selectedConn()
 	if !ok || cc.ID != "b" {
 		t.Fatalf("selectedConn = %+v ok=%v, want b", cc, ok)

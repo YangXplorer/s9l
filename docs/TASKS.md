@@ -322,11 +322,9 @@
   - 产出：`theme.go` `applyStyles()`——设 `tview.Styles.PrimitiveBackgroundColor/PrimaryTextColor = ColorDefault`(面板/文字透传终端，像 lazygit)，`BorderColor/TitleColor/GraphicsColor/Secondary/Tertiary` 用主题色；`ContrastBackgroundColor`/`MoreContrast`/`Inverse` 保留 tview 默认以保证输入框/按钮/删除模态在透明背景上可见。`New` 中 buildLayout 前调用一次。
   - DoD：白盒 `TestApplyStylesUsesTerminalBackground`(PrimitiveBackground/PrimaryText==ColorDefault) ✅；真实 pty——4 面板正常渲染、输出**无强制黑底 SGR `40m`**(终端默认背景透传，对比改动前满屏 `40m`) ✅；核心零改动。
   - 依赖：T3-1 · 预估：0.5d
-- [ ] **T4-2 Connections 面板：连接 → 数据库（可展开）**
-  - 目标：Connections 从扁平 List 改为可展开树：连接为根，连接成功后在其下展开该连接的**数据库列表**；选中某数据库即设为「当前数据库」并刷新 Schema 面板。
-  - 需要修改：`internal/tui`——Connections 改 `tview.TreeView`（连接节点 + 数据库子节点）；`Enter` 连接节点=连接并加载其库（`Metadata.Databases()`，懒加载）；`Enter` 数据库节点=设 `a.currentDB` 并触发 `loadSchema`；图标(T3-2)/编辑删除(B-6)键位适配树结构（在连接节点上 `e`/`d`）；未连接的连接不展开。
-  - 关键考量：List→TreeView 的迁移影响 B-6 的 `selectedConn`（按节点引用而非列表索引取连接）；连接 vs 展开库的交互需直觉；多连接各自的库。
-  - DoD：选中连接 `Enter`→连接并列出其库；选中库→Schema 刷新为该库表；`e`/`d` 仍对连接生效；白盒（fake conn 列库、选库回调）+ pty；核心零改动。
+- [x] **T4-2 Connections 面板：连接 → 数据库（可展开）**
+  - 产出：Connections 由 `tview.List` 改为 `tview.TreeView`(`SetTopLevel(1)` 隐藏合成根)；`connNodeRef{cc}`/`dbNodeRef{connID,db}` 节点引用；`onConnSelect`：连接节点→`connect`+`loadConnDatabases`(多库引擎列 `Metadata.Databases` 为子节点、Schema 占位 "select a database"；单库引擎直接 `loadSchema`)+展开；数据库节点→设 `currentDB`+`loadSchema`+状态。`connect` 不再直接 loadSchema(由调用方决定，auto-connect 经 `findConnNode`+`onConnSelect` 复用同一路径)；`loadSchema` 改为列「当前库」表(`databaseBrowser.TablesIn(currentDB)` 或 `Metadata.Tables`)；`selectedConn` 由列表索引改为按当前节点引用(库节点回溯到所属连接)，B-6 的 `e`/`d` 适配；图标(T3-2)在连接节点。移除 B-7 在 Schema 内的 db 节点/`loadTablesInto`(库层已上移)。
+  - DoD：白盒 `TestLoadConnDatabases`(连接→库子节点排序、currentDB 待选)、`TestLoadSchemaForCurrentDB`(选库→该库表 `tableRef{db}`)、`TestSelectedConn`(树节点映射)、既有 `TestConnectionsPopulated`/`TestConnListShowsIconAndName`/E2E 适配 ✅；真实 MySQL `neohub-dev` pty——auto-connect 后 Connections 展开出 information_schema/mysql 等库、Schema 显示 "select a database" ✅；核心零改动。
   - 依赖：T4-1、B-6、B-7 · 预估：1d
 - [ ] **T4-3 Schema 面板：当前数据库的表 + 检索**
   - 目标：Schema 面板**只显示所选数据库的表**（库层已移到 Connections），并可检索表名。
