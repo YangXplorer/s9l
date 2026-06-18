@@ -69,6 +69,7 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | `s9l <连接|DSN>` | 进入交互式 REPL |
 | `s9l conn list\|add\|rm` | 管理命名连接 |
 | `s9l history [--limit N]` | 查看最近查询历史 |
+| `s9l history stats [--top N]` | 历史统计（计数/成功率/平均耗时/高频查询） |
 | `s9l saved add\|list\|search\|rm\|run` | 管理与运行收藏查询 |
 | `s9l saved folder add\|rm` · `folders` · `mv` | 收藏查询的文件夹分组 |
 | `s9l tui [连接]` | 启动全屏 TUI |
@@ -320,6 +321,15 @@ s9l history --limit 0    # 全部
 ```
 
 字段依次为：**执行时间 · 状态(ok/ERR) · 耗时(ms) · 连接 id · SQL（折成单行）**。
+
+统计（只读聚合本地历史）：
+
+```bash
+s9l history stats            # 默认 Top 10 高频查询
+s9l history stats --top 20
+```
+
+输出：总数 / 成功 / 失败 / 成功率 / 平均耗时；**按连接计数**；**最高频查询**（次数 · 平均耗时 · SQL）。
 
 ---
 
