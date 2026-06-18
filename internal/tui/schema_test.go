@@ -5,7 +5,10 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/driver"
+
+	"github.com/rivo/tview"
 )
 
 func TestPreviewQuery(t *testing.T) {
@@ -83,7 +86,7 @@ func (c *fakeBrowserConn) TablesIn(_ context.Context, db string) (driver.Rows, e
 	return nameRows(c.dbs[db]), nil
 }
 
-func TestLoadSchemaMultiDB(t *testing.T) {
+func newBrowserApp() *App {
 	a := New(Options{Config: sqliteCfg("demo", "x.db")})
 	a.conn = &fakeBrowserConn{dbs: map[string][]string{
 		"app":  {"users", "orders"},
@@ -91,26 +94,39 @@ func TestLoadSchemaMultiDB(t *testing.T) {
 	}}
 	a.driverName = "mysql"
 	a.connID = "my"
+	return a
+}
 
-	a.loadSchema()
-	dbNodes := a.schema.GetRoot().GetChildren()
-	if len(dbNodes) != 2 {
-		t.Fatalf("got %d database nodes, want 2", len(dbNodes))
-	}
-	// Sorted: app, logs. Database nodes carry dbRef and start collapsed/empty.
-	app := dbNodes[0]
-	if ref, ok := app.GetReference().(dbRef); !ok || ref.name != "app" {
-		t.Fatalf("first node ref = %+v, want dbRef{app}", app.GetReference())
-	}
-	if len(app.GetChildren()) != 0 {
-		t.Error("database node should start without loaded tables")
-	}
+// Connections tree: a connected multi-database engine lists its databases as
+// child nodes (each a dbNodeRef), sorted.
+func TestLoadConnDatabases(t *testing.T) {
+	a := newBrowserApp()
+	node := tview.NewTreeNode("my")
+	a.loadConnDatabases(node, config.ConnectionConfig{ID: "my", Driver: "mysql"})
 
-	// Expanding "app" lazy-loads its tables, qualified with the database.
-	a.onSchemaSelect(app)
-	kids := app.GetChildren()
+	kids := node.GetChildren()
 	if len(kids) != 2 {
-		t.Fatalf("app expanded to %d tables, want 2", len(kids))
+		t.Fatalf("got %d database nodes, want 2 (app, logs)", len(kids))
+	}
+	ref, ok := kids[0].GetReference().(dbNodeRef)
+	if !ok || ref.db != "app" || ref.connID != "my" {
+		t.Fatalf("first db node ref = %+v, want dbNodeRef{my, app}", kids[0].GetReference())
+	}
+	if a.currentDB != "" {
+		t.Errorf("currentDB = %q after listing databases, want empty until one is picked", a.currentDB)
+	}
+}
+
+// Schema panel: with a database picked (currentDB), it lists that database's
+// tables (via TablesIn), each a db-qualified tableRef.
+func TestLoadSchemaForCurrentDB(t *testing.T) {
+	a := newBrowserApp()
+	a.currentDB = "app"
+	a.loadSchema()
+
+	kids := a.schema.GetRoot().GetChildren()
+	if len(kids) != 2 {
+		t.Fatalf("schema tables = %d, want 2 (users, orders)", len(kids))
 	}
 	ref, ok := kids[0].GetReference().(tableRef)
 	if !ok || ref.db != "app" || ref.name != "users" {

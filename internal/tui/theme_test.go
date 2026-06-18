@@ -50,8 +50,8 @@ func TestFocusPanelSetsBorderColors(t *testing.T) {
 	if a.results.GetBorderColor() != a.theme.Focus {
 		t.Errorf("focused Results border = %v, want %v", a.results.GetBorderColor(), a.theme.Focus)
 	}
-	if a.connList.GetBorderColor() != a.theme.Border {
-		t.Errorf("unfocused Connections border = %v, want %v", a.connList.GetBorderColor(), a.theme.Border)
+	if a.connTree.GetBorderColor() != a.theme.Border {
+		t.Errorf("unfocused Connections border = %v, want %v", a.connTree.GetBorderColor(), a.theme.Border)
 	}
 }
 

@@ -132,19 +132,20 @@ s9l tui          # choose a connection inside the UI
 s9l tui mydb     # auto-connect to a named connection
 ```
 
-Panels: **Connections** (from your config) · **Schema** · **Results** · **SQL
-editor**. On MySQL the Schema panel is a database → table tree (expand a database
-to load its tables — handy when the connection has no default database); other
-engines list the connected database's tables. Select a table to preview it, or
-write SQL and run it with F5. Queries run asynchronously and can be cancelled
-with Esc.
+Panels: **Connections** (a tree of your configured connections) · **Schema** ·
+**Results** · **SQL editor**. On MySQL, pressing `Enter` on a connection connects
+and expands it to its **databases**; pick a database and the **Schema** panel
+lists that database's tables (handy when the connection has no default database).
+Other engines list the connected database's tables directly. Select a table to
+preview it, or write SQL and run it with F5. Queries run asynchronously and can
+be cancelled with Esc.
 
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift-Tab` | switch panel |
 | `1` / `2` / `3` / `4` | Connections / Schema / Results / SQL editor |
 | `Up`/`Down` · `j`/`k` | navigate within a panel |
-| `Enter` | connect (Connections) · preview table (Schema) |
+| `Enter` | Connections: connect + list databases · pick a database · Schema: preview table |
 | `n` / `e` / `d` | add / edit / delete a connection (Connections panel; passwords in the keychain) |
 | `F5` | run the SQL editor |
 | `/` | filter the results (substring, any column) |

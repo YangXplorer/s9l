@@ -57,14 +57,15 @@ type App struct {
 	store secret.SecretStore
 	hist  *history.Store
 
-	connList *tview.List
+	connTree *tview.TreeView
 	schema   *tview.TreeView
 	results  *tview.Table
 	editor   *tview.TextArea
 	status   *tview.TextView
 	keybar   *tview.TextView
 
-	theme Theme
+	theme     Theme
+	currentDB string // database selected in the Connections tree (drives Schema)
 
 	focusIdx     int
 	helpOpen     bool
@@ -119,16 +120,19 @@ func New(opts Options) *App {
 	a.app.SetInputCapture(a.onKey)
 
 	if opts.Conn != "" {
-		if cc, ok := a.cfg.Get(opts.Conn); ok {
-			_ = a.connect(cc)
+		// Auto-connect shares the Enter path: connect + expand databases.
+		if node := a.findConnNode(opts.Conn); node != nil {
+			a.connTree.SetCurrentNode(node)
+			a.onConnSelect(node)
 		}
 	}
 	return a
 }
 
 func (a *App) buildLayout() {
-	a.connList = tview.NewList().ShowSecondaryText(false)
-	a.titledPanel(a.connList.Box, "[1] Connections")
+	a.connTree = tview.NewTreeView().SetTopLevel(1) // hide the synthetic root
+	a.connTree.SetSelectedFunc(a.onConnSelect)
+	a.titledPanel(a.connTree.Box, "[1] Connections")
 
 	a.schema = tview.NewTreeView()
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
@@ -144,7 +148,6 @@ func (a *App) buildLayout() {
 	// Selected-row highlight (skipped under NO_COLOR so tview's default reverse
 	// styling keeps the selection visible on monochrome terminals).
 	if !noColor() {
-		a.connList.SetSelectedBackgroundColor(a.theme.Selection).SetSelectedTextColor(tcell.ColorBlack)
 		a.results.SetSelectedStyle(tcell.StyleDefault.Background(a.theme.Selection).Foreground(tcell.ColorBlack))
 	}
 
@@ -156,7 +159,7 @@ func (a *App) buildLayout() {
 	a.keybar.SetText(" " + a.keyBar())
 
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.connList, 0, 1, true).
+		AddItem(a.connTree, 0, 1, true).
 		AddItem(a.schema, 0, 1, false)
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.results, 0, 1, false).
@@ -181,14 +184,14 @@ func (a *App) titledPanel(b *tview.Box, title string) {
 
 // navPanels are the focusable panels cycled by Tab / 1-4.
 func (a *App) navPanels() []tview.Primitive {
-	return []tview.Primitive{a.connList, a.schema, a.results, a.editor}
+	return []tview.Primitive{a.connTree, a.schema, a.results, a.editor}
 }
 
 // focusPanel moves focus to panel i and highlights its border.
 func (a *App) focusPanel(i int) {
 	a.focusIdx = i
 	a.app.SetFocus(a.navPanels()[i])
-	a.connList.SetBorderColor(a.theme.border(i == 0))
+	a.connTree.SetBorderColor(a.theme.border(i == 0))
 	a.schema.SetBorderColor(a.theme.border(i == 1))
 	a.results.SetBorderColor(a.theme.border(i == 2))
 	a.editor.SetBorderColor(a.theme.border(i == 3))
@@ -241,7 +244,7 @@ const helpText = `[::b]s9l TUI[::-]
 
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
-  Enter             connect / preview table
+  Enter             connect + list databases · pick database · preview table
   n / e / d         new / edit / delete connection
   F5                run SQL editor
   /                 filter results
@@ -254,18 +257,90 @@ const helpText = `[::b]s9l TUI[::-]
 
   [::d]press any key to close[::-]`
 
-// populateConnections fills the list from config; Enter connects. Each row is a
-// single line: a database-type icon plus the connection's display name.
+// connNodeRef marks a connection node in the Connections tree.
+type connNodeRef struct{ cc config.ConnectionConfig }
+
+// dbNodeRef marks a database node (a child of a connection node).
+type dbNodeRef struct {
+	connID string
+	db     string
+}
+
+// populateConnections (re)builds the Connections tree from config: each
+// connection is a top-level node (icon + display name); Enter connects it and,
+// for multi-database engines, expands it to its databases.
 func (a *App) populateConnections() {
-	a.connList.Clear()
+	root := tview.NewTreeNode("")
+	a.connTree.SetRoot(root)
 	for _, cc := range a.cfg.Connections {
-		a.connList.AddItem(connIcon(cc.Driver)+connDisplayName(cc), "", 0, func() {
-			_ = a.connect(cc)
-		})
+		root.AddChild(tview.NewTreeNode(connIcon(cc.Driver) + connDisplayName(cc)).
+			SetReference(connNodeRef{cc: cc}))
 	}
-	if a.connList.GetItemCount() == 0 {
-		a.connList.AddItem("(no connections — press n to add)", "", 0, nil)
+	if len(a.cfg.Connections) == 0 {
+		root.AddChild(tview.NewTreeNode("(no connections — press n to add)"))
 	}
+	if kids := root.GetChildren(); len(kids) > 0 {
+		a.connTree.SetCurrentNode(kids[0])
+	}
+}
+
+// onConnSelect handles Enter in the Connections tree: a connection node connects
+// (and, for multi-database engines, expands to its databases); a database node
+// becomes the current database and refreshes the Schema panel.
+func (a *App) onConnSelect(node *tview.TreeNode) {
+	switch ref := node.GetReference().(type) {
+	case connNodeRef:
+		if err := a.connect(ref.cc); err != nil {
+			return
+		}
+		a.loadConnDatabases(node, ref.cc)
+		node.SetExpanded(true)
+	case dbNodeRef:
+		a.currentDB = ref.db
+		a.loadSchema()
+		a.SetStatus(fmt.Sprintf("database: [::b]%s[::-]", ref.db))
+	default:
+		node.SetExpanded(!node.IsExpanded())
+	}
+}
+
+// loadConnDatabases fills a just-connected connection node. Multi-database
+// engines list their databases as child nodes (pick one to drive Schema);
+// others have no database level, so Schema shows the connected database's
+// tables directly.
+func (a *App) loadConnDatabases(node *tview.TreeNode, cc config.ConnectionConfig) {
+	a.currentDB = ""
+	node.ClearChildren()
+
+	md, isMeta := a.conn.(driver.Metadata)
+	if _, multi := a.conn.(databaseBrowser); !multi || !isMeta {
+		a.loadSchema() // single-database engines: tables of the connected db
+		return
+	}
+	dbs, err := namesFrom(md.Databases(context.Background()))
+	if err != nil {
+		a.setError("list databases: " + err.Error())
+		return
+	}
+	for _, db := range dbs {
+		node.AddChild(tview.NewTreeNode(db).
+			SetReference(dbNodeRef{connID: cc.ID, db: db}).
+			SetColor(a.theme.Accent))
+	}
+	a.schemaPlaceholder("select a database")
+}
+
+// findConnNode returns the Connections-tree node for the connection id, or nil.
+func (a *App) findConnNode(id string) *tview.TreeNode {
+	if a.connTree.GetRoot() == nil {
+		return nil
+	}
+	for _, n := range a.connTree.GetRoot().GetChildren() {
+		if ref, ok := n.GetReference().(connNodeRef); ok && ref.cc.ID == id {
+			return n
+		}
+	}
+	return nil
 }
 
 // connect resolves the connection's password, opens it, and updates status.
@@ -293,8 +368,10 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	a.conn = conn
 	a.connID = cc.ID
 	a.driverName = cc.Driver
+	a.currentDB = ""
 	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)", cc.ID, cc.Driver))
-	a.loadSchema()
+	// What to show after connecting (databases vs tables) is decided by the
+	// caller via loadConnDatabases, so auto-connect and Enter share one path.
 	return nil
 }
 
@@ -307,45 +384,19 @@ type databaseBrowser interface {
 	TablesIn(ctx context.Context, database string) (driver.Rows, error)
 }
 
-// schema-tree node references.
-type dbRef struct{ name string }        // a database node (lazy-loads its tables)
-type tableRef struct{ db, name string } // a table node; db=="" means current db
+// tableRef marks a table node in the Schema panel; db=="" means the connected
+// database (single-database engines), otherwise the database picked in the
+// Connections tree.
+type tableRef struct{ db, name string }
 
 // onSchemaSelect handles Enter on a schema node: a table node runs a preview
-// query; a database node lazy-loads its tables and toggles; anything else just
-// toggles expansion.
+// query; anything else toggles expansion.
 func (a *App) onSchemaSelect(node *tview.TreeNode) {
-	switch ref := node.GetReference().(type) {
-	case tableRef:
+	if ref, ok := node.GetReference().(tableRef); ok {
 		a.runTableQuery(ref)
-	case dbRef:
-		if len(node.GetChildren()) == 0 {
-			a.loadTablesInto(node, ref.name)
-		}
-		node.SetExpanded(!node.IsExpanded())
-	default:
-		node.SetExpanded(!node.IsExpanded())
-	}
-}
-
-// loadTablesInto lazily fills a database node with its tables.
-func (a *App) loadTablesInto(node *tview.TreeNode, db string) {
-	browser, ok := a.conn.(databaseBrowser)
-	if !ok {
 		return
 	}
-	tables, err := namesFrom(browser.TablesIn(context.Background(), db))
-	if err != nil {
-		a.setError("list tables: " + err.Error())
-		return
-	}
-	if len(tables) == 0 {
-		node.AddChild(tview.NewTreeNode("(no tables)"))
-		return
-	}
-	for _, t := range tables {
-		node.AddChild(tview.NewTreeNode(t).SetReference(tableRef{db: db, name: t}))
-	}
+	node.SetExpanded(!node.IsExpanded())
 }
 
 // runTableQuery previews a table: the first resultLimit rows. The name is quoted
@@ -714,13 +765,18 @@ func quoteIdent(driverName, name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// loadSchema populates the schema tree via the driver's Metadata capability.
-// Drivers that can browse other databases on the connection (databaseBrowser,
-// e.g. MySQL) get a database→table tree (each database lazy-loads its tables on
-// expand); others list the connected database's tables directly. This fixes the
-// "no tables shown" case when a connection has no default database selected.
+// loadSchema fills the Schema panel with the tables of the current database:
+// the one picked in the Connections tree (currentDB) for multi-database engines,
+// otherwise the connection's own database. Selecting a table previews it.
 func (a *App) loadSchema() {
-	root := tview.NewTreeNode(a.connID).SetColor(tcell.ColorYellow)
+	if a.conn == nil {
+		return
+	}
+	label := a.connID
+	if a.currentDB != "" {
+		label = a.currentDB
+	}
+	root := tview.NewTreeNode(label).SetColor(a.theme.Accent)
 	a.schema.SetRoot(root).SetCurrentNode(root)
 
 	md, ok := a.conn.(driver.Metadata)
@@ -728,30 +784,30 @@ func (a *App) loadSchema() {
 		root.AddChild(tview.NewTreeNode("(driver has no metadata)"))
 		return
 	}
-
-	if _, multi := a.conn.(databaseBrowser); multi {
-		dbs, err := namesFrom(md.Databases(context.Background()))
-		if err != nil {
-			a.setError("list databases: " + err.Error())
-			return
-		}
-		for _, db := range dbs {
-			root.AddChild(tview.NewTreeNode(db).
-				SetReference(dbRef{name: db}).
-				SetColor(a.theme.Accent).
-				SetExpanded(false))
-		}
-		return
+	var (
+		tables []string
+		err    error
+	)
+	if b, multi := a.conn.(databaseBrowser); multi && a.currentDB != "" {
+		tables, err = namesFrom(b.TablesIn(context.Background(), a.currentDB))
+	} else {
+		tables, err = namesFrom(md.Tables(context.Background()))
 	}
-
-	tables, err := namesFrom(md.Tables(context.Background()))
 	if err != nil {
 		a.setError("list tables: " + err.Error())
 		return
 	}
 	for _, name := range tables {
-		root.AddChild(tview.NewTreeNode(name).SetReference(tableRef{name: name}))
+		root.AddChild(tview.NewTreeNode(name).SetReference(tableRef{db: a.currentDB, name: name}))
 	}
+}
+
+// schemaPlaceholder shows a one-line hint in the Schema panel (e.g. before a
+// database is chosen).
+func (a *App) schemaPlaceholder(msg string) {
+	root := tview.NewTreeNode(a.connID).SetColor(a.theme.Accent)
+	root.AddChild(tview.NewTreeNode("(" + msg + ")"))
+	a.schema.SetRoot(root).SetCurrentNode(root)
 }
 
 // namesFrom collects the first column of rows (a name listing), folding the

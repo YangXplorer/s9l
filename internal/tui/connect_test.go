@@ -79,8 +79,8 @@ func TestAutoConnect(t *testing.T) {
 
 func TestConnectionsPopulated(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
-	if got := a.connList.GetItemCount(); got != 1 {
-		t.Fatalf("connList items = %d, want 1", got)
+	if got := len(a.connTree.GetRoot().GetChildren()); got != 1 {
+		t.Fatalf("connection nodes = %d, want 1", got)
 	}
 }
 
