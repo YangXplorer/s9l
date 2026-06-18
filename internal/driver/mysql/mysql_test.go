@@ -87,6 +87,28 @@ func TestMetadata(t *testing.T) {
 	if !containsFirstCol(t, dbs, "app") {
 		t.Error("Databases should include app")
 	}
+
+	// TablesIn lists tables of a *named* database (backs the TUI database→table
+	// tree). Create a second database and list its table cross-database.
+	if _, err := conn.Exec(ctx, `CREATE DATABASE IF NOT EXISTS other`); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `CREATE TABLE other.gadgets (id INT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create other.gadgets: %v", err)
+	}
+	browser, ok := conn.(interface {
+		TablesIn(context.Context, string) (driver.Rows, error)
+	})
+	if !ok {
+		t.Fatal("mysql conn should implement TablesIn")
+	}
+	otherTables, err := browser.TablesIn(ctx, "other")
+	if err != nil {
+		t.Fatalf("TablesIn: %v", err)
+	}
+	if !containsFirstCol(t, otherTables, "gadgets") {
+		t.Error("TablesIn(other) should include gadgets")
+	}
 }
 
 func containsFirstCol(t *testing.T, rows driver.Rows, want string) bool {
