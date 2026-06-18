@@ -296,10 +296,10 @@
   - 产出：`internal/tui/connform.go`——Connections 面板 `n`（或 `Ctrl-N`）打开 `tview.Form`：id/name/driver(下拉 sqlite|postgres|mysql|sqlserver)/host/port/user/database/ssl(勾选)/password(掩码) 或 password-ref；提交→校验→`config.Add`+`Save`，有密码则 `secret.Default().Set`（写 keychain，配置仅存 ref）→刷新 Connections 列表；`Esc` 取消；错误进表单/状态栏
   - DoD：表单填写→保存→出现在 Connections 且写入 config.yaml（白盒：表单值→保存→`config.Load` 校验、密码进 keychain 用 go-keyring `MockInit` 验 ref 与解析）；重复 id/缺必填 报错不崩；`Esc` 无副作用；真实 pty `n`→填→保存→可见
   - 依赖：T3-1 · 预估：1.5d · 注：复用 `config`/`secret`，核心零改动；编辑/删除连接可后续
-- [ ] **T3-5 结果过滤器**
-  - 产出：App 保存上次结果集（列+行）；Results 面板 `/` 打开过滤输入框，按子串（大小写不敏感、跨列）实时过滤行并重渲染；`Esc` 关闭/清空、空过滤显示全部；状态栏显示 `filtered M/N`；NULL 单元格按既有文本参与匹配
-  - DoD：`filterRows(cols,rows,term)` 纯函数白盒（大小写/跨列/NULL/空 term）+ 应用后行数断言；真实 pty `/`→输入→Esc
-  - 依赖：T-1c（结果表格）· 预估：1d · 注：客户端内存过滤（结果已在内存）；服务端 WHERE 注入留后续
+- [x] **T3-5 结果过滤器**
+  - 产出：App 保存上次结果集(`lastCols`/`lastData`)，结果经 `setResults` 统一存+渲染并清空过滤；`filterRows(data, term)` 纯函数(子串、大小写不敏感、跨列、NULL→"NULL" 参与匹配、空 term 返回全量)；`/` 打开过滤输入浮层(`tview.InputField`，`SetChangedFunc` 实时 `applyFilter`)，Enter 保留、Esc 清空并关闭(`hideFilter`)；状态栏 `filtered M/N`/清空时 `%d rows`；onKey 在 filterOpen 时优先处理(置于 vim j/k 之前，避免把输入 j/k 转成方向键)；keybar/help 增 `/`
+  - DoD：`filterRows` 大小写/跨列/NULL/空 term 白盒 + `applyFilter` 行数断言(header+匹配) + 无结果时不开浮层 `TestShowFilterNoResults` ✅；真实 pty keybar/help 显示 `/ filter` ✅
+  - 依赖：T-1c（结果表格）· 预估：1d · 注：客户端内存过滤；服务端 WHERE 注入留后续
 
 ### 新数据库：SQL Server
 
