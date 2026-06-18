@@ -11,7 +11,7 @@
 |------|---------|------|---------|
 | **`go install`** | `go install github.com/YangXplorer/s9l/cmd/s9l@latest` | Go 开发者，零基建 | v0.1 |
 | **GitHub Releases 二进制** | 下载对应平台压缩包解压 | 所有人，无需 Go 环境 | v0.1 |
-| **Homebrew** | `brew install YangXplorer/tap/s9l` | macOS/Linux 主力 | v0.2 |
+| **Homebrew** | `brew install YangXplorer/tap/s9l` | macOS/Linux 主力 | v0.4 ✅ |
 | **install.sh** | `curl -fsSL https://raw.githubusercontent.com/YangXplorer/s9l/main/install.sh \| sh` | Linux/快速试用 | v0.2 |
 | **Scoop**（Windows） | `scoop install s9l` | Windows | v0.3 按需 |
 | **deb/rpm**（nfpm） | `apt`/`yum` | Linux 发行版 | v0.3 按需 |

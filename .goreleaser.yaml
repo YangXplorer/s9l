@@ -43,4 +43,22 @@ release:
     name: s9l
   prerelease: auto # tags like v0.1.0-rc.1 are marked as pre-releases
 
-# Homebrew tap (v0.2), deb/rpm and docker (v0.3) land later — see docs/RELEASE.md.
+homebrew_casks:
+  - name: s9l
+    repository:
+      owner: YangXplorer
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/YangXplorer/s9l"
+    description: "Fast terminal database client (SQLite, PostgreSQL, MySQL) with a TUI"
+    # Don't update the tap for pre-releases (rc/beta tags).
+    skip_upload: auto
+    # Clear the quarantine xattr so the unsigned binary runs without a Gatekeeper prompt.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/s9l"]
+          end
+
+# deb/rpm and docker land later — see docs/RELEASE.md.

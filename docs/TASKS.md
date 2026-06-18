@@ -206,7 +206,7 @@
   - DoD：`conn add --password` 存 keychain、config 仅留 ref、解析回连（白盒 `TestConnAddWithPasswordUsesKeychain`，用 go-keyring `MockInit`）✅；keychain 只在 `keychain://` ref 时触碰（env:/无密码连接无需 keyring 后端）✅；切换 memory→keychain 调用方不变（`SecretStore` 接口）✅
   - 预估：1d · 注：真实 OS keychain 读写为手动验证（CI 用 MockInit，符合 TESTING.md 约定）；对话式密码输入后续
 - [ ] **P2-7 schema cache（可选）**（`~/.cache/s9l/schema.db`，缓存表/列元数据加速补全）· 预估：1d
-- [ ] **P2-8 发布渠道扩展**（启用 goreleaser Homebrew tap + `install.sh` + 配 `HOMEBREW_TAP_TOKEN`；建空仓库 `YangXplorer/homebrew-tap`）· 预估：0.5d · 详见 [RELEASE.md](./RELEASE.md)
+- [x] **P2-8 发布渠道扩展（Homebrew）**：建 `YangXplorer/homebrew-tap`；`.goreleaser.yaml` 加 `homebrew_casks`(非 deprecated, 含 quarantine 清除 hook)；`release.yml` 传 `HOMEBREW_TAP_TOKEN`(已设为 repo secret)；README 加 `brew install YangXplorer/tap/s9l`。`goreleaser check` 干净、snapshot 生成 cask。首个 tag(>= 下次发布)推送 formula 后 brew 可用。· 预估：0.5d · 注：install.sh 留后续
 
 **Phase 2 验收**：新增 MySQL 不触碰核心层；补全/分页可用；密码进系统 Keychain；config.yaml 无明文密码；`brew install` 可用。
 
