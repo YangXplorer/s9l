@@ -79,6 +79,7 @@ type App struct {
 	filterOpen   bool
 	connFormOpen bool
 	confirmOpen  bool
+	exportOpen   bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -256,6 +257,7 @@ const helpText = `[::b]s9l TUI[::-]
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
+  Ctrl-E            export the current results to a file (csv/json/tsv)
   Up / Down · j / k navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
@@ -948,6 +950,12 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the export input is open, the InputField's done func handles
+	// Enter/Esc; pass everything (incl. j/k) through as literal text.
+	if a.exportOpen {
+		return ev
+	}
+
 	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
 	// editor (where they are text). Applies in panels and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
@@ -1007,6 +1015,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyCtrlF:
 		a.showSaved()
+		return nil
+	case tcell.KeyCtrlE:
+		a.showExport()
 		return nil
 	case tcell.KeyTab:
 		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
