@@ -54,7 +54,8 @@ func TestConnListShowsIconAndName(t *testing.T) {
 	}}
 	a := New(Options{Config: cfg})
 	main := a.connTree.GetRoot().GetChildren()[0].GetText()
-	if !strings.HasPrefix(main, "[pg] ") || !strings.Contains(main, "Dev Postgres") {
+	// A not-yet-connected node has a 2-space indicator slot, then icon + name.
+	if !strings.Contains(main, "[pg] Dev Postgres") {
 		t.Errorf("conn row = %q, want icon + display name", main)
 	}
 }

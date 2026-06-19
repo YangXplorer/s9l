@@ -11,30 +11,48 @@ import (
 // Theme holds the TUI color scheme. When NO_COLOR is set the colors collapse to
 // the terminal default so the UI stays readable on monochrome terminals.
 type Theme struct {
-	Focus     tcell.Color // focused panel border
-	Border    tcell.Color // unfocused panel border
-	Title     tcell.Color // panel title text
-	Accent    tcell.Color // keybar key glyphs / highlights
-	Dim       tcell.Color // secondary text
-	Error     tcell.Color // error messages
-	Selection tcell.Color // selected list/table row
+	Focus         tcell.Color // focused panel border
+	Border        tcell.Color // unfocused panel border
+	Title         tcell.Color // panel title text
+	Accent        tcell.Color // keybar key glyphs / highlights
+	Dim           tcell.Color // secondary text
+	Error         tcell.Color // error messages
+	Selection     tcell.Color // selected row background
+	SelectionText tcell.Color // selected row text
+	Field         tcell.Color // input field / modal background
+	FieldText     tcell.Color // input field / modal text
+	Contrast      tcell.Color // fallback contrast background (readable with light text)
 }
 
 // newTheme returns the active theme, honoring NO_COLOR.
 func newTheme() Theme {
 	if noColor() {
 		c := tcell.ColorDefault
-		return Theme{Focus: c, Border: c, Title: c, Accent: c, Dim: c, Error: c, Selection: c}
+		return Theme{Focus: c, Border: c, Title: c, Accent: c, Dim: c, Error: c,
+			Selection: c, SelectionText: c, Field: c, FieldText: c, Contrast: c}
 	}
 	return Theme{
-		Focus:     tcell.ColorGreen,
-		Border:    tcell.ColorGray,
-		Title:     tcell.ColorWhite,
-		Accent:    tcell.ColorGreen,
-		Dim:       tcell.ColorGray,
-		Error:     tcell.ColorRed,
-		Selection: tcell.ColorTeal,
+		Focus:         tcell.ColorGreen,
+		Border:        tcell.ColorGray,
+		Title:         tcell.ColorWhite,
+		Accent:        tcell.ColorGreen,
+		Dim:           tcell.ColorGray,
+		Error:         tcell.ColorRed,
+		Selection:     tcell.NewRGBColor(0xc0, 0xc0, 0xc0), // light gray bar
+		SelectionText: tcell.ColorBlack,
+		Field:         tcell.NewRGBColor(0xcf, 0xcf, 0xcf), // light input/modal surface
+		FieldText:     tcell.ColorBlack,
+		Contrast:      tcell.NewRGBColor(0x30, 0x35, 0x40), // dim slate fallback
 	}
+}
+
+// selectionStyle is the style for the selected row (light bar + dark text), or
+// reverse video under NO_COLOR so the selection stays visible.
+func (t Theme) selectionStyle() tcell.Style {
+	if noColor() {
+		return tcell.StyleDefault.Reverse(true)
+	}
+	return tcell.StyleDefault.Background(t.Selection).Foreground(t.SelectionText)
 }
 
 // noColor reports whether color output should be suppressed (NO_COLOR, see
@@ -82,6 +100,15 @@ func (t Theme) applyStyles() {
 	tview.Styles.GraphicsColor = t.Border
 	tview.Styles.SecondaryTextColor = t.Dim
 	tview.Styles.TertiaryTextColor = t.Accent
+	// Fallback contrast surface (a dim slate that stays readable with the light
+	// default text); interactive widgets override this with the lighter Field.
+	tview.Styles.ContrastBackgroundColor = t.Contrast
+	tview.Styles.MoreContrastBackgroundColor = t.Contrast
+	if noColor() {
+		tview.Styles.InverseTextColor = tcell.ColorDefault
+	} else {
+		tview.Styles.InverseTextColor = tcell.ColorWhite
+	}
 }
 
 // useRoundedBorders switches tview's global box-drawing runes to rounded

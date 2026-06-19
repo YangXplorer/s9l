@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/YangXplorer/s9l/internal/config"
@@ -95,6 +96,31 @@ func newBrowserApp() *App {
 	a.driverName = "mysql"
 	a.connID = "my"
 	return a
+}
+
+// setConnNodeLabel adds an expand indicator only once a connection has database
+// children, and toggles ▾/▸ with the expanded state.
+func TestConnNodeExpandIndicator(t *testing.T) {
+	a := newBrowserApp()
+	cc := config.ConnectionConfig{ID: "my", Driver: "mysql"}
+	node := a.treeNode("").SetReference(connNodeRef{cc: cc})
+
+	a.setConnNodeLabel(node, cc)
+	if strings.HasPrefix(node.GetText(), "▾") || strings.HasPrefix(node.GetText(), "▸") {
+		t.Errorf("no children → no triangle, got %q", node.GetText())
+	}
+
+	a.loadConnDatabases(node, cc) // adds db children
+	node.SetExpanded(true)
+	a.setConnNodeLabel(node, cc)
+	if !strings.HasPrefix(node.GetText(), "▾ ") {
+		t.Errorf("expanded with children → ▾, got %q", node.GetText())
+	}
+	node.SetExpanded(false)
+	a.setConnNodeLabel(node, cc)
+	if !strings.HasPrefix(node.GetText(), "▸ ") {
+		t.Errorf("collapsed with children → ▸, got %q", node.GetText())
+	}
 }
 
 // Connections tree: a connected multi-database engine lists its databases as

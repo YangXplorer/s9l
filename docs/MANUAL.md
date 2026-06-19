@@ -72,6 +72,7 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | `s9l history stats [--top N]` | 历史统计（计数/成功率/平均耗时/高频查询） |
 | `s9l saved add\|list\|search\|rm\|run` | 管理与运行收藏查询 |
 | `s9l saved folder add\|rm` · `folders` · `mv` | 收藏查询的文件夹分组 |
+| `s9l import <连接|DSN> --table T --file f` | 批量导入 CSV/JSON 到表 |
 | `s9l tui [连接]` | 启动全屏 TUI |
 | `s9l help` · `-h` · `--help` | 顶层帮助 |
 | `s9l --version` | 打印版本 |
@@ -414,7 +415,7 @@ s9l tui pg       # 直接连上命名连接 pg
 ```
 
 四个面板：
-- **Connections（左上）**：`config.yaml` 里的连接树。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
+- **Connections（左上）**：`config.yaml` 里的连接树（无树形连线；可展开的连接前显示开合三角 `▾`/`▸`；`↑`/`↓` 或 `j`/`k` 上下选择）。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
 - **Schema（左下）**：当前所选数据库的**表列表**。`Enter` 预览选中表（自动按方言取前 200 行）。按 `/` **检索表名**（子串、大小写不敏感，状态栏显示 `tables M/N`）。
 - **Results（右上）**：查询/预览结果表格。按 `/` **过滤结果行**（跨列子串）。
 - **SQL (F5 run)（右下）**：SQL 编辑器，`F5` 执行。
@@ -504,7 +505,16 @@ s9l tui prod
 
 # 7. 防止误跑超长查询
 s9l prod -e "select * from huge_table" --timeout 30s
+
+# 8. 批量导入 CSV / JSON 到已存在的表
+s9l import prod --table users --file users.csv
+s9l import prod --table events --file events.json --batch 1000
 ```
+
+> **导入 `import`**：`s9l <连接|DSN> import --table T --file f [--format csv|json] [--batch N]`。
+> CSV 首行为列名、其余为字符串值；JSON 为对象数组（列取首个对象的键、排序；缺失键→NULL）。
+> 按 `--batch`（默认 500）分批多行 INSERT，占位符/标识符按方言自动适配。
+> 表需**预先存在**；导入中途出错会报告已成功行数（无整体事务回滚）。
 
 ---
 
