@@ -366,14 +366,10 @@
 
 > 已细化「需要修改的内容」便于将来直接领取。标注 **架构影响**：✅=核心零改动（新增包/扩展配置即可）；⚠️=需小幅触碰连接编排或 Metadata 可选接口；🔴=需改核心抽象，开工前先做设计 spike。
 
-- [ ] **B-1 SSH Tunnel（连接前建隧道）** · ⚠️ · 预估 2–3d
-  - 目标：DB 在堡垒机后时，连接前先建 SSH 本地端口转发再连库。
-  - 需要修改：
-    - `internal/config/connection.go`：`ConnectionConfig` 增 `ssh:` 块（`ssh_host/ssh_port/ssh_user/ssh_key_path/ssh_key_ref(passphrase)/ssh_password_ref/known_hosts`）。
-    - 新增 `internal/tunnel/`：基于 `golang.org/x/crypto/ssh`（纯 Go，免 CGO）拨号堡垒机、开本地 listener 转发到远端 `host:port`，返回本地地址 + `Close()`。
-    - 连接编排（`cmd/s9l/main.go:resolveTarget` 与 `internal/tui` connect 路径）：若有 ssh 配置→先起隧道→把 DSN 的 host:port 改写为本地转发地址→`driver.Open`→连接关闭时拆隧道。**driver 接口不变**，仅在"打开连接"这层插入隧道（小幅触碰编排）。
-    - `internal/secret`：SSH 密码/私钥 passphrase 复用 `SecretStore`（`ssh_password_ref`/`ssh_key_ref`）。
-  - 关键考量/风险：**必须校验 known_hosts**（默认不盲信主机密钥）；支持私钥(含 passphrase)/密码/`ssh-agent` 三种认证；隧道生命周期绑定连接；IT 用容器化 sshd + db。
+- [x] **B-1 SSH Tunnel（连接前建隧道）** · 预估 2–3d
+  - 产出：① `config` 增 `SSHHost/SSHPort/SSHUser/SSHKey/SSHKeyPassRef/SSHKnownHosts/SSHInsecureHostKey` + `HasSSH()`/`DialHostPort()`(驱动默认端口)；② `internal/tunnel`(`golang.org/x/crypto/ssh`，纯 Go)——拨号堡垒机+本地 listener+`direct-tcpip` 转发，私钥/ssh-agent 认证，**默认 known_hosts 校验主机密钥**(`InsecureHostKey` 显式跳过)；③ `internal/dial`——`Open(ctx, cc, store)` 复用于 CLI/TUI：解析密码→有 SSH 则起隧道并把 host/port 改写为本地端→`DSN`→`driver.Open`，返回 conn+合并 closer(关连接+拆隧道)；④ cmd 用 `openTarget`(替代 resolveTarget) 经 dial、TUI `connect` 经 dial(`connClose` 保存以关隧道)；`conn add` 加 `--ssh-*` flags。**driver 接口零改动**，仅"打开连接"层插入。
+  - DoD：白盒——`internal/tunnel` 用**进程内 SSH 服务器**端到端验证转发(`TestForwardsThroughSSH`：known_hosts 校验通过、回声穿隧道；`TestInsecureHostKeySkipsVerification`)，无需 Docker；`dial` 无 SSH 走 sqlite + 密码 ref 错误；config `TestSSHHelpers`(HasSSH/DialHostPort 默认)；`-short`/lint/build 全绿 ✅；docs(README/MANUAL §4) 同步。
+  - 注：私钥口令经 `ssh_key_pass_ref`(SecretStore)；密码认证/跳板多级留后续。真实"DB over SSH"端到端属手动验证，隧道转发逻辑已由进程内 SSH 测试确定性覆盖。
 - [x] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
   - 产出：`internal/config/connection.go` 增 `SSLMode/TLSCA/TLSCert/TLSKey`（`ssl_mode/tls_ca/tls_cert/tls_key`）；`sslMode(whenOn)` 解析（SSLMode 优先，否则 SSL→whenOn/disable）；`validateTLS` 对不支持驱动清晰报错。postgres DSN 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql `mysqlTLS` 映射 `tls`（内置模式，自定义证书报错改用裸 DSN）；sqlserver `encrypt`+`trustservercertificate`（require=加密不校验）+`certificate`(CA)。`conn add` 加 `--ssl-mode/--tls-ca/--tls-cert/--tls-key`。**`ssl: true` 行为不变**（pg=require、mysql=tls=true、sqlserver=encrypt 并校验）。
   - DoD：白盒 `TestDSNTLS`（pg sslmode+CA+客户端证书精确 DSN；mysql 各模式→tls/disable 省略；mysql 证书报错；sqlserver ssl:true=encrypt 校验、ssl_mode=require=trust+CA；sqlserver 客户端证书报错）+ 既有 `TestDSN` 向后兼容仍 PASS ✅；docs(MANUAL §4、README) 同步。核心层零改动（仅 config + cmd flag）。

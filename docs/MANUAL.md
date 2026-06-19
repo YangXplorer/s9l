@@ -129,6 +129,18 @@ s9l conn rm pg
 > `ssl: true` 行为不变（postgres=require、mysql=tls、sqlserver=encrypt 并验证证书）。
 > mysql 的自定义 CA/客户端证书需用裸 DSN（`RegisterTLSConfig`），config 仅支持其内置模式。
 
+**SSH 隧道**（数据库在堡垒机后时，连接前先建隧道）：
+
+| 参数 | 说明 |
+|------|------|
+| `--ssh-host` | SSH 堡垒机主机（设置即启用隧道） |
+| `--ssh-port` `--ssh-user` | 堡垒机端口（默认 22）/ 用户 |
+| `--ssh-key` | SSH 私钥文件（不设则用 SSH agent `$SSH_AUTH_SOCK`） |
+| `--ssh-known-hosts` | known_hosts 文件（默认 `~/.ssh/known_hosts`） |
+| `--ssh-insecure-host-key` | 跳过主机密钥校验（**不安全**，仅测试用） |
+
+> 默认**校验堡垒机主机密钥**（`known_hosts`）；首次连接需先用 `ssh` 把主机加入 known_hosts，或显式 `--ssh-insecure-host-key`。加密私钥口令用 `ssh_key_pass_ref`（同 `password_ref` 形式）配置。
+
 ### 4.2 配置文件
 
 连接保存在 `$XDG_CONFIG_HOME/s9l/config.yaml`（回退 `~/.config/s9l/config.yaml`），权限 `0600`。可手动编辑：

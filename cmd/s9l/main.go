@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/secret"
@@ -123,16 +124,11 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 // runQuery resolves target to a connection, runs sql, renders the result, and
 // records history (best-effort). It is shared by the `-e` path and `saved run`.
 func runQuery(ctx context.Context, out, errOut io.Writer, target, driverFlag, sql string, opts render.Options, timeout time.Duration, usePager bool) error {
-	drv, dsn, err := resolveTarget(target, driverFlag)
+	conn, _, closeConn, err := openTarget(ctx, target, driverFlag)
 	if err != nil {
 		return err
 	}
-
-	conn, err := driver.Open(ctx, drv, dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = closeConn() }()
 
 	qctx, cancel := queryContext(ctx, timeout)
 	defer cancel()
@@ -186,26 +182,27 @@ func isTTY(w io.Writer) bool {
 // names a configured connection, that connection's driver/DSN (with its
 // password resolved) is used; otherwise it is treated as a bare DSN for the
 // driver given by the --driver flag.
-func resolveTarget(target, driverFlag string) (drv, dsn string, _ error) {
+// openTarget opens a connection for target and returns it with its driver name
+// and a close func. A configured connection is opened via dial (resolving its
+// password and, if requested, an SSH tunnel); otherwise target is a bare DSN
+// for the --driver. The close func releases the connection and any tunnel.
+func openTarget(ctx context.Context, target, driverFlag string) (driver.Conn, string, func() error, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", "", err
+		return nil, "", nil, err
 	}
-	cc, ok := cfg.Get(target)
-	if !ok {
-		return driverFlag, target, nil
+	if cc, ok := cfg.Get(target); ok {
+		conn, closer, err := dial.Open(ctx, cc, secret.Default())
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return conn, cc.Driver, closer, nil
 	}
-	// Resolve via the OS keychain store (handles env: and keychain:// refs;
-	// the keychain is only touched for keychain:// refs).
-	password, err := secret.Resolve(secret.Default(), cc.PasswordRef)
+	conn, err := driver.Open(ctx, driverFlag, target)
 	if err != nil {
-		return "", "", fmt.Errorf("connection %q: %w", cc.ID, err)
+		return nil, "", nil, err
 	}
-	d, err := cc.DSN(password)
-	if err != nil {
-		return "", "", err
-	}
-	return cc.Driver, d, nil
+	return conn, driverFlag, conn.Close, nil
 }
 
 // execute runs the SQL and renders the result, returning the number of rows

@@ -140,6 +140,29 @@ func TestDSN(t *testing.T) {
 	}
 }
 
+func TestSSHHelpers(t *testing.T) {
+	if (config.ConnectionConfig{}).HasSSH() {
+		t.Error("no ssh_host → HasSSH false")
+	}
+	if !(config.ConnectionConfig{SSHHost: "bastion"}).HasSSH() {
+		t.Error("ssh_host set → HasSSH true")
+	}
+
+	// DialHostPort uses the configured port, else the driver default.
+	h, p := config.ConnectionConfig{Driver: "postgres", Host: "db"}.DialHostPort()
+	if h != "db" || p != 5432 {
+		t.Errorf("postgres default = %s:%d, want db:5432", h, p)
+	}
+	_, p = config.ConnectionConfig{Driver: "mysql", Port: 3307}.DialHostPort()
+	if p != 3307 {
+		t.Errorf("explicit port = %d, want 3307", p)
+	}
+	_, p = config.ConnectionConfig{Driver: "clickhouse"}.DialHostPort()
+	if p != 9000 {
+		t.Errorf("clickhouse default = %d, want 9000", p)
+	}
+}
+
 func TestDSNTLS(t *testing.T) {
 	// postgres: ssl_mode + CA/client cert map to libpq params.
 	pg := config.ConnectionConfig{ID: "x", Driver: "postgres", Host: "db", Port: 5432, User: "dev", Database: "app",

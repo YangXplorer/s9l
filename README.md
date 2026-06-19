@@ -100,6 +100,11 @@ Manage connections with `s9l conn add|list|rm`.
 client certificate (CA: postgres & SQL Server; client cert: postgres). `ssl:
 true` keeps its previous behavior.
 
+**SSH tunnel**: reach a database behind a bastion with `--ssh-host` (plus
+`--ssh-port`/`--ssh-user`/`--ssh-key`). The bastion host key is verified against
+`~/.ssh/known_hosts` (override with `--ssh-known-hosts`, or skip with the
+insecure `--ssh-insecure-host-key`); without `--ssh-key` the SSH agent is used.
+
 ## Commands
 
 | Command | Description |
