@@ -67,6 +67,26 @@ func TestApplyStylesUsesTerminalBackground(t *testing.T) {
 	}
 }
 
+func TestSelectionStyleReadable(t *testing.T) {
+	th := newTheme() // colors on
+	fg, bg, _ := th.selectionStyle().Decompose()
+	if bg != th.Selection || fg != th.SelectionText {
+		t.Errorf("selectionStyle = fg %v / bg %v, want %v / %v", fg, bg, th.SelectionText, th.Selection)
+	}
+	// Selected text and background must differ so content stays readable.
+	if fg == bg {
+		t.Error("selection foreground and background must differ")
+	}
+}
+
+func TestSelectionStyleNoColorReverses(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	_, _, attr := newTheme().selectionStyle().Decompose()
+	if attr&tcell.AttrReverse == 0 {
+		t.Error("NO_COLOR selection should use reverse video")
+	}
+}
+
 func TestKeyBarListsShortcuts(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db")})
 	bar := a.keyBar()

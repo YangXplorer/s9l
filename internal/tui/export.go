@@ -20,6 +20,7 @@ func (a *App) showExport() {
 		return
 	}
 	in := tview.NewInputField().SetLabel(" save to: ").SetText("results.csv")
+	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
 	in.SetBorder(true).
 		SetTitle(" Export results — Enter: save · Esc: cancel ").
 		SetBorderColor(a.theme.Focus)

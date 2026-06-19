@@ -60,6 +60,11 @@ func (a *App) showConnForm(edit *config.ConnectionConfig) {
 		}
 	})
 	form.AddButton("Cancel", func() { a.hideConnForm() })
+	form.SetFieldBackgroundColor(a.theme.Field).
+		SetFieldTextColor(a.theme.FieldText).
+		SetButtonBackgroundColor(a.theme.Field).
+		SetButtonTextColor(a.theme.FieldText).
+		SetLabelColor(a.theme.Title)
 	form.SetBorder(true).SetTitle(title).SetTitleColor(a.theme.Title)
 	form.SetBorderColor(a.theme.Focus)
 
@@ -271,6 +276,7 @@ func (a *App) confirmDeleteSelectedConn() {
 				a.SetStatus("connection deleted")
 			}
 		})
+	modal.SetBackgroundColor(a.theme.Field).SetTextColor(a.theme.FieldText)
 	a.pages.AddPage("confirmdel", modal, true, true)
 	a.app.SetFocus(modal)
 	a.confirmOpen = true

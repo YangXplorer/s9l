@@ -313,6 +313,29 @@
 
 ---
 
+## Phase 5 — TUI 可读性与操作性微调（目标 v0.8，按用户反馈，优先）
+
+预估合计：~1 人周。延续原则：**只改 `internal/tui/`，核心零改动**；白盒 + SimulationScreen 冒烟 + 手动清单。背景：T4-1 把全局文字/背景设为终端默认后，tview 默认选中样式塌缩成「默认 on 默认」不可读；输入框/模态沿用 tview 默认亮蓝 `ContrastBackgroundColor` 过于刺眼。
+
+- [x] **T5-1 配色可读性：选中行 / 输入框 / 模态背景**
+  - 产出：`theme.go` `Theme` 增 `Selection`(浅灰)/`SelectionText`(黑)/`Field`(浅灰)/`FieldText`(黑)/`Contrast`(暗 slate 回退)；`selectionStyle()`(浅底深字，NO_COLOR→反显)；`applyStyles` 设 `ContrastBackgroundColor=Contrast`+`InverseTextColor`。Results `SetSelectedStyle(selectionStyle())`；`treeNode()` 给每个可选节点设 `SetSelectedTextStyle(selectionStyle())`。交互控件显式配色：connform `Form.SetField/Button/Label*`、`/` 过滤与 `Ctrl-E` 导出 `InputField.SetFieldBackground/TextColor`、删除 `Modal.SetBackground/TextColor` 用 `Field`/`FieldText`。修复 T4-1 后选中样式塌缩为「默认 on 默认」不可读的问题。
+  - DoD：白盒 `TestSelectionStyleReadable`(fg≠bg、= Selection/SelectionText)、`TestSelectionStyleNoColorReverses` ✅；真实 pty 无崩溃；核心零改动。
+  - 依赖：T4-1 · 预估：0.75d
+- [x] **T5-2 Connections 去树线 + 展开指示符**
+  - 产出：`connTree`/`schema` `SetGraphics(false)`(去 tview 树连线)；`setConnNodeLabel`——连接节点有数据库子节点时按展开态加 `▾ `/`▸ `(否则 2 空格对齐位)，`onConnSelect` 连接节点已连则切换展开并更新三角；数据库/表为叶子无三角。
+  - DoD：白盒 `TestConnNodeExpandIndicator`(无子→无三角、展开→▾、折叠→▸) ✅；真实 SQLite pty——树连接符 ├/└ 计数 0、退出 exit 0 ✅；核心零改动。
+  - 依赖：T4-2 · 预估：0.5d
+- [x] **T5-3 Connections 上下移动选择（确认）**
+  - 产出：`connTree` 为 `tview.TreeView`，方向键原生 + 既有 vim `j/k`→Down/Up 在 Connections 生效；`populateConnections` 设首节点为 current；连接展开数据库后可在连接/库间上下移动，当前行经 T5-1 选中样式高亮。
+  - DoD：SQLite pty 内 `j` 移动不崩、当前行高亮可见(T5-1)；核心零改动。· 依赖：T5-1、T4-2 · 预估：0.25d
+- [x] **T5-4 使用手册 / README 同步**
+  - 产出：`docs/MANUAL.md` §11 Connections 说明加「无树线 + 开合三角 `▾`/`▸` + 上下选择」；本轮键位无新增（沿用 Enter/j/k）。
+  - DoD：文档与实现一致 ✅。· 依赖：T5-1/T5-2/T5-3 · 预估：0.25d
+
+**Phase 5 验收**：选中行/输入框/模态清晰可读且不刺眼；Connections 无树线、有开合三角、可上下选择；文档同步。核心零改动；CI 绿。
+
+---
+
 ## Phase 4 — TUI 交互重构（目标 v0.7）
 
 预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
