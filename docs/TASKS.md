@@ -385,10 +385,10 @@
     - 新增 `internal/awsauth/`：用 AWS SDK Go v2 `feature/rds/auth.BuildAuthToken(ctx, endpoint, region, user, creds)` 在**连接时**生成 token（时效短，不长缓存）。
     - 连接编排：auth=rds-iam 时即时取 token 当密码，并强制 TLS（RDS IAM 必须）。
   - 关键考量/风险：**引入 AWS SDK 依赖较重**（纯 Go，不破坏 CGO 约束）；凭据链 env/instance-profile/SSO；token 仅握手时需要（长连接不受 TTL 影响）；真实连接需 AWS 环境→**手动验证**，单测只验 token 装配（fake creds）。
-- [ ] **B-4 ClickHouse 驱动** · ✅ · 预估 1.5d
-  - 目标：新增 ClickHouse（关系型、契合现有接口）。
-  - 需要修改：新增 `internal/driver/clickhouse/`（`github.com/ClickHouse/clickhouse-go/v2` 的 database/sql stdlib，纯 Go）；`[]byte`→string 归一化；Metadata 用 `system.tables`/`system.columns`/`system.databases`；config 加 clickhouse DSN 分支 + 注册。**核心零改动**（同 MySQL/SQL Server 模式）。
-  - 关键考量/风险：方言差异（`LIMIT` OK；类型多）下沉到 driver；testcontainers `clickhouse/clickhouse-server`。
+- [x] **B-4 ClickHouse 驱动（含一致性套件方言化）** · 预估 1.5d
+  - 产出：① `internal/driver/drivertest/conformance.go` 方言化——`Option`(`WithTypes`/`WithTableSuffix`/`SkipRowsAffected`)，默认值与原 SQL **完全一致**（SQLite/PG/MySQL/SQL Server 不变）；② `internal/driver/clickhouse/`（`ClickHouse/clickhouse-go/v2` stdlib，纯 Go；`[]byte`→string；Metadata `system.databases`/`system.tables`(currentDatabase)/`system.columns`，`?` 占位）；③ config `clickhouseDSN`(`clickhouse://user:pass@host:9000/db`，ssl→`secure`/require→`skip_verify`；证书文件报错)+ DSN 分支 + `cmd/s9l/main.go` 注册。**核心 driver 接口零改动**。
+  - DoD：ClickHouse IT 用方言选项(`Int32`/`String`/`Nullable(String)`、`ENGINE=Memory`、SkipRowsAffected)跑 `RunConformance`+Metadata（testcontainers `clickhouse/clickhouse-server:24.3-alpine`，CI 验证）；既有 SQLite conformance 默认值不变仍 PASS ✅；config `TestDSN`(clickhouse + secure) ✅；`-short`/lint/build 全绿 ✅；docs 同步。
+  - 注：ClickHouse 需 `ENGINE` 子句 + `Nullable(...)` + INSERT 不报 RowsAffected——故先把一致性套件做成方言无关，也让将来非标准 SQL 引擎更易接入。
 - [ ] **B-5 MongoDB（评估非关系型对接口的冲击）** · 🔴 · 预估：设计 spike 0.5d，落地大
   - 目标：评估能否纳入文档型数据库。
   - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。

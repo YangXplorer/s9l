@@ -16,22 +16,59 @@ import (
 // OpenFunc returns a fresh connection to an empty, writable database.
 type OpenFunc func(ctx context.Context) (driver.Conn, error)
 
+// dialect captures the small SQL differences between engines so the conformance
+// suite stays portable. The zero value (via defaults) reproduces the standard
+// SQL used by SQLite/PostgreSQL/MySQL/SQL Server; engines that differ (e.g.
+// ClickHouse, which needs an ENGINE clause and Nullable types) pass Options.
+type dialect struct {
+	intType          string // column type for integers
+	textType         string // column type for text
+	nullableText     string // column type for a nullable text column
+	tableSuffix      string // appended after CREATE TABLE (...) — e.g. " ENGINE = Memory"
+	skipRowsAffected bool   // engine doesn't report RowsAffected for INSERT
+}
+
+func defaults() dialect {
+	return dialect{intType: "INTEGER", textType: "TEXT", nullableText: "TEXT"}
+}
+
+// Option customizes the conformance dialect.
+type Option func(*dialect)
+
+// WithTypes overrides the integer / text / nullable-text column types.
+func WithTypes(intType, textType, nullableText string) Option {
+	return func(d *dialect) { d.intType, d.textType, d.nullableText = intType, textType, nullableText }
+}
+
+// WithTableSuffix appends s after every "CREATE TABLE (...)" (e.g. an engine clause).
+func WithTableSuffix(s string) Option { return func(d *dialect) { d.tableSuffix = s } }
+
+// SkipRowsAffected disables the RowsAffected assertion for engines that don't
+// report it (e.g. ClickHouse INSERT).
+func SkipRowsAffected() Option { return func(d *dialect) { d.skipRowsAffected = true } }
+
 // RunConformance exercises the core Driver/Conn/Rows contract.
-func RunConformance(t *testing.T, open OpenFunc) {
+func RunConformance(t *testing.T, open OpenFunc, opts ...Option) {
 	t.Helper()
+	d := defaults()
+	for _, o := range opts {
+		o(&d)
+	}
 
 	t.Run("exec_and_query", func(t *testing.T) {
 		ctx := context.Background()
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
-		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER, name TEXT)`)
+		mustExec(t, c, ctx, `CREATE TABLE t (id `+d.intType+`, name `+d.textType+`)`+d.tableSuffix)
 		res, err := c.Exec(ctx, `INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b')`)
 		if err != nil {
 			t.Fatalf("insert: %v", err)
 		}
-		if n, err := res.RowsAffected(); err != nil || n != 2 {
-			t.Fatalf("RowsAffected = %d, err = %v, want 2, nil", n, err)
+		if !d.skipRowsAffected {
+			if n, err := res.RowsAffected(); err != nil || n != 2 {
+				t.Fatalf("RowsAffected = %d, err = %v, want 2, nil", n, err)
+			}
 		}
 		cols, rows := queryAll(t, c, ctx, `SELECT id, name FROM t ORDER BY id`)
 		if diff := cmp.Diff([]string{"id", "name"}, cols); diff != "" {
@@ -47,7 +84,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
-		mustExec(t, c, ctx, `CREATE TABLE t (v TEXT)`)
+		mustExec(t, c, ctx, `CREATE TABLE t (v `+d.nullableText+`)`+d.tableSuffix)
 		mustExec(t, c, ctx, `INSERT INTO t (v) VALUES (NULL)`)
 		_, rows := queryAll(t, c, ctx, `SELECT v FROM t`)
 		if len(rows) != 1 {
@@ -63,7 +100,7 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		c := mustOpen(t, open, ctx)
 		defer func() { _ = c.Close() }()
 		mustExec(t, c, ctx, `DROP TABLE IF EXISTS t`)
-		mustExec(t, c, ctx, `CREATE TABLE t (id INTEGER)`)
+		mustExec(t, c, ctx, `CREATE TABLE t (id `+d.intType+`)`+d.tableSuffix)
 		cols, rows := queryAll(t, c, ctx, `SELECT id FROM t`)
 		if len(cols) != 1 {
 			t.Fatalf("got %d columns, want 1", len(cols))
