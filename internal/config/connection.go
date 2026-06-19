@@ -54,6 +54,8 @@ func (c ConnectionConfig) DSN(password string) (string, error) {
 		return c.mysqlDSN(password), nil
 	case "sqlserver":
 		return c.sqlserverDSN(password), nil
+	case "clickhouse":
+		return c.clickhouseDSN(password), nil
 	case "":
 		return "", fmt.Errorf("connection %q: missing driver", c.ID)
 	default:
@@ -77,6 +79,8 @@ func (c ConnectionConfig) validateTLS() error {
 		return nil
 	case "mysql":
 		return fmt.Errorf("connection %q: mysql TLS certs require a raw DSN (RegisterTLSConfig); use ssl_mode for built-in modes", c.ID)
+	case "clickhouse":
+		return fmt.Errorf("connection %q: clickhouse TLS certs require a raw DSN; use ssl/ssl_mode for secure mode", c.ID)
 	default:
 		return fmt.Errorf("connection %q: driver %q has no TLS file options", c.ID, c.Driver)
 	}
@@ -203,6 +207,45 @@ func (c ConnectionConfig) sqlserverDSN(password string) string {
 		q.Set("certificate", c.TLSCA)
 	}
 	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// clickhouseDSN builds a clickhouse-go URL:
+//
+//	clickhouse://user:password@host:9000/db?secure=true[&skip_verify=true]
+//
+// SSL/ssl_mode toggles the secure transport; ssl_mode=require encrypts without
+// verifying the server certificate (skip_verify).
+func (c ConnectionConfig) clickhouseDSN(password string) string {
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	port := c.Port
+	if port == 0 {
+		port = 9000
+	}
+	u := url.URL{Scheme: "clickhouse", Host: fmt.Sprintf("%s:%d", host, port), Path: "/" + c.Database}
+	if c.User != "" {
+		if password != "" {
+			u.User = url.UserPassword(c.User, password)
+		} else {
+			u.User = url.User(c.User)
+		}
+	}
+	q := url.Values{}
+	switch strings.ToLower(c.sslMode("verify-full")) {
+	case "disable", "false":
+		// plaintext (default)
+	case "require":
+		q.Set("secure", "true")
+		q.Set("skip_verify", "true")
+	default: // verify-ca / verify-full / true
+		q.Set("secure", "true")
+	}
+	if len(q) > 0 {
+		u.RawQuery = q.Encode()
+	}
 	return u.String()
 }
 

@@ -3,7 +3,7 @@
 A fast terminal database client. Connect to a database and run queries with one
 short command — simple to use, scriptable, and easy to extend to new databases.
 
-> Status: early development (v0.x). SQLite, PostgreSQL, MySQL and SQL Server are
+> Status: early development (v0.x). SQLite, PostgreSQL, MySQL, SQL Server and ClickHouse are
 > supported today; more databases are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features

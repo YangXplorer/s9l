@@ -119,6 +119,22 @@ func TestDSN(t *testing.T) {
 		t.Fatalf("sqlserver DSN = %q", msDSN)
 	}
 
+	// clickhouse builds a clickhouse:// URL (default port 9000).
+	ch := config.ConnectionConfig{ID: "x", Driver: "clickhouse", Host: "db", User: "dev", Database: "app"}
+	chDSN, err := ch.DSN("pw")
+	if err != nil {
+		t.Fatalf("clickhouse DSN: %v", err)
+	}
+	if chDSN != "clickhouse://dev:pw@db:9000/app" {
+		t.Fatalf("clickhouse DSN = %q", chDSN)
+	}
+	// SSL → secure transport.
+	chSecure := config.ConnectionConfig{ID: "x", Driver: "clickhouse", Host: "db", Port: 9440, Database: "app", SSL: true}
+	d, _ := chSecure.DSN("")
+	if !strings.Contains(d, "secure=true") {
+		t.Errorf("clickhouse ssl should set secure=true: %q", d)
+	}
+
 	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mongodb"}).DSN(""); err == nil {
 		t.Fatal("unimplemented driver should error")
 	}
