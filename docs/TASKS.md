@@ -374,13 +374,10 @@
     - 连接编排（`cmd/s9l/main.go:resolveTarget` 与 `internal/tui` connect 路径）：若有 ssh 配置→先起隧道→把 DSN 的 host:port 改写为本地转发地址→`driver.Open`→连接关闭时拆隧道。**driver 接口不变**，仅在"打开连接"这层插入隧道（小幅触碰编排）。
     - `internal/secret`：SSH 密码/私钥 passphrase 复用 `SecretStore`（`ssh_password_ref`/`ssh_key_ref`）。
   - 关键考量/风险：**必须校验 known_hosts**（默认不盲信主机密钥）；支持私钥(含 passphrase)/密码/`ssh-agent` 三种认证；隧道生命周期绑定连接；IT 用容器化 sshd + db。
-- [ ] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
-  - 目标：比当前布尔 `ssl` 更细——CA 校验、客户端证书(mTLS)、各驱动 sslmode/tls 模式。
-  - 需要修改：
-    - `internal/config/connection.go`：增 `tls_ca/tls_cert/tls_key/tls_server_name/ssl_mode`（保留 `ssl: true` 向后兼容→等价 `require`）。
-    - DSN 构建：postgres 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql 用 `mysql.RegisterTLSConfig(name, *tls.Config)` 后 DSN 带 `tls=<name>`；sqlserver `encrypt`/`trustServerCertificate`。
-    - 可新增 `internal/config` 内小助手：由文件路径构建 `*tls.Config`。
-  - 关键考量/风险：默认推荐 `verify-full`；mysql 的 RegisterTLSConfig 是全局注册需在 Open 前调用；证书路径错误要清晰报错。
+- [x] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
+  - 产出：`internal/config/connection.go` 增 `SSLMode/TLSCA/TLSCert/TLSKey`（`ssl_mode/tls_ca/tls_cert/tls_key`）；`sslMode(whenOn)` 解析（SSLMode 优先，否则 SSL→whenOn/disable）；`validateTLS` 对不支持驱动清晰报错。postgres DSN 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql `mysqlTLS` 映射 `tls`（内置模式，自定义证书报错改用裸 DSN）；sqlserver `encrypt`+`trustservercertificate`（require=加密不校验）+`certificate`(CA)。`conn add` 加 `--ssl-mode/--tls-ca/--tls-cert/--tls-key`。**`ssl: true` 行为不变**（pg=require、mysql=tls=true、sqlserver=encrypt 并校验）。
+  - DoD：白盒 `TestDSNTLS`（pg sslmode+CA+客户端证书精确 DSN；mysql 各模式→tls/disable 省略；mysql 证书报错；sqlserver ssl:true=encrypt 校验、ssl_mode=require=trust+CA；sqlserver 客户端证书报错）+ 既有 `TestDSN` 向后兼容仍 PASS ✅；docs(MANUAL §4、README) 同步。核心层零改动（仅 config + cmd flag）。
+  - 注：TLS 需真实证书/服务器做端到端，本环境无法 live；以 DSN 字符串断言固定安全相关映射（同既有 DSN 测试方式），供评审。mysql 自定义证书/客户端证书留裸 DSN。
 - [ ] **B-3 AWS RDS IAM Auth（临时 token 连接）** · ⚠️ · 预估 2d
   - 目标：用 IAM 生成 ~15 分钟临时 token 作为 RDS/Aurora(pg/mysql) 的密码。
   - 需要修改：
@@ -388,10 +385,10 @@
     - 新增 `internal/awsauth/`：用 AWS SDK Go v2 `feature/rds/auth.BuildAuthToken(ctx, endpoint, region, user, creds)` 在**连接时**生成 token（时效短，不长缓存）。
     - 连接编排：auth=rds-iam 时即时取 token 当密码，并强制 TLS（RDS IAM 必须）。
   - 关键考量/风险：**引入 AWS SDK 依赖较重**（纯 Go，不破坏 CGO 约束）；凭据链 env/instance-profile/SSO；token 仅握手时需要（长连接不受 TTL 影响）；真实连接需 AWS 环境→**手动验证**，单测只验 token 装配（fake creds）。
-- [ ] **B-4 ClickHouse 驱动** · ✅ · 预估 1.5d
-  - 目标：新增 ClickHouse（关系型、契合现有接口）。
-  - 需要修改：新增 `internal/driver/clickhouse/`（`github.com/ClickHouse/clickhouse-go/v2` 的 database/sql stdlib，纯 Go）；`[]byte`→string 归一化；Metadata 用 `system.tables`/`system.columns`/`system.databases`；config 加 clickhouse DSN 分支 + 注册。**核心零改动**（同 MySQL/SQL Server 模式）。
-  - 关键考量/风险：方言差异（`LIMIT` OK；类型多）下沉到 driver；testcontainers `clickhouse/clickhouse-server`。
+- [x] **B-4 ClickHouse 驱动（含一致性套件方言化）** · 预估 1.5d
+  - 产出：① `internal/driver/drivertest/conformance.go` 方言化——`Option`(`WithTypes`/`WithTableSuffix`/`SkipRowsAffected`)，默认值与原 SQL **完全一致**（SQLite/PG/MySQL/SQL Server 不变）；② `internal/driver/clickhouse/`（`ClickHouse/clickhouse-go/v2` stdlib，纯 Go；`[]byte`→string；Metadata `system.databases`/`system.tables`(currentDatabase)/`system.columns`，`?` 占位）；③ config `clickhouseDSN`(`clickhouse://user:pass@host:9000/db`，ssl→`secure`/require→`skip_verify`；证书文件报错)+ DSN 分支 + `cmd/s9l/main.go` 注册。**核心 driver 接口零改动**。
+  - DoD：ClickHouse IT 用方言选项(`Int32`/`String`/`Nullable(String)`、`ENGINE=Memory`、SkipRowsAffected)跑 `RunConformance`+Metadata（testcontainers `clickhouse/clickhouse-server:24.3-alpine`，CI 验证）；既有 SQLite conformance 默认值不变仍 PASS ✅；config `TestDSN`(clickhouse + secure) ✅；`-short`/lint/build 全绿 ✅；docs 同步。
+  - 注：ClickHouse 需 `ENGINE` 子句 + `Nullable(...)` + INSERT 不报 RowsAffected——故先把一致性套件做成方言无关，也让将来非标准 SQL 引擎更易接入。
 - [ ] **B-5 MongoDB（评估非关系型对接口的冲击）** · 🔴 · 预估：设计 spike 0.5d，落地大
   - 目标：评估能否纳入文档型数据库。
   - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。

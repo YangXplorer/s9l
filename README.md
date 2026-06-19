@@ -3,7 +3,7 @@
 A fast terminal database client. Connect to a database and run queries with one
 short command — simple to use, scriptable, and easy to extend to new databases.
 
-> Status: early development (v0.x). SQLite, PostgreSQL, MySQL and SQL Server are
+> Status: early development (v0.x). SQLite, PostgreSQL, MySQL, SQL Server and ClickHouse are
 > supported today; more databases are on the roadmap. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Features
@@ -93,6 +93,12 @@ s9l conn add --id pg --driver postgres --host localhost --user dev \
 scripts prefer `--password-ref env:PGPASSWORD`.)
 
 Manage connections with `s9l conn add|list|rm`.
+
+**TLS**: beyond `--ssl`, use `--ssl-mode` for finer control (postgres
+`require|verify-ca|verify-full`, mysql `skip-verify|preferred`, sqlserver
+`require|verify-full`) and `--tls-ca` / `--tls-cert` / `--tls-key` for a CA and
+client certificate (CA: postgres & SQL Server; client cert: postgres). `ssl:
+true` keeps its previous behavior.
 
 ## Commands
 

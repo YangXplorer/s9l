@@ -1,8 +1,8 @@
 # s9l 使用说明书
 
 > 终端数据库客户端。一条短命令连上数据库跑查询——简单、可脚本化、易扩展。
-> 当前支持数据库：**SQLite · PostgreSQL · MySQL · SQL Server**（纯 Go 驱动，单静态二进制，免 CGO）。
-> 本文覆盖 v0.7.0 的全部命令、输出形式、全屏 TUI 与配置。命令速查见 [README](../README.md)，路线图见 [PLAN.md](./PLAN.md)。
+> 当前支持数据库：**SQLite · PostgreSQL · MySQL · SQL Server · ClickHouse**（纯 Go 驱动，单静态二进制，免 CGO）。
+> 本文覆盖 v0.9.0 的全部命令、输出形式、全屏 TUI 与配置。命令速查见 [README](../README.md)，路线图见 [PLAN.md](./PLAN.md)。
 
 ---
 
@@ -39,7 +39,7 @@ go install github.com/YangXplorer/s9l/cmd/s9l@latest
 验证安装：
 
 ```bash
-s9l --version       # 形如：s9l 0.7.0 (commit abc1234, built 2026-06-19)
+s9l --version       # 形如：s9l 0.9.0 (commit abc1234, built 2026-06-19)
 s9l help            # 顶层帮助概览
 ```
 
@@ -82,7 +82,7 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | 参数 | 含义 |
 |------|------|
 | `-e "SQL"` | 执行 SQL 后退出（不带则进 REPL） |
-| `--driver NAME` | 裸 DSN 使用的驱动，默认 `sqlite`（可选 `sqlite`/`postgres`/`mysql`/`sqlserver`） |
+| `--driver NAME` | 裸 DSN 使用的驱动，默认 `sqlite`（可选 `sqlite`/`postgres`/`mysql`/`sqlserver`/`clickhouse`） |
 | `--format FMT` | 输出格式：`table` \| `json` \| `csv` \| `tsv`。默认：TTY→`table`，管道→`tsv` |
 | `--max-col-width N` | 把表格单元格截断到 N 个字符（仅 `table` 格式；0=不限） |
 | `--timeout DUR` | 超过该时长则中断查询（如 `30s`；0=不限）。`Ctrl-C` 也能取消 |
@@ -113,7 +113,7 @@ s9l conn rm pg
 | 参数 | 必填 | 说明 |
 |------|:---:|------|
 | `--id` | ✅ | 连接 id（唯一），后续 `s9l <id>` 用它引用 |
-| `--driver` | ✅ | `sqlite` / `postgres` / `mysql` / `sqlserver` |
+| `--driver` | ✅ | `sqlite` / `postgres` / `mysql` / `sqlserver` / `clickhouse` |
 | `--name` | | 显示名（备注用） |
 | `--host` `--port` `--user` | | 网络数据库的连接信息 |
 | `--database` | | 数据库名；**SQLite 时填文件路径** |
@@ -121,6 +121,13 @@ s9l conn rm pg
 | `--charset` | | 字符集（mysql 用） |
 | `--password` | | 把密码**存入系统 keychain**，并自动设置 `password_ref` |
 | `--password-ref` | | 直接指定密码引用，如 `env:PGPASSWORD` 或 `keychain://s9l/...` |
+| `--ssl-mode` | | TLS 模式（比 `--ssl` 更细）：postgres `disable\|require\|verify-ca\|verify-full`；mysql `require\|skip-verify\|preferred`；sqlserver `disable\|require\|verify-full` |
+| `--tls-ca` | | CA 证书文件（postgres、sqlserver） |
+| `--tls-cert` `--tls-key` | | 客户端证书/私钥（仅 postgres） |
+
+> **TLS 细化**：`--ssl` 是开关（等价 `ssl-mode` 的 require/verify 默认）；`--ssl-mode` 精确控制。
+> `ssl: true` 行为不变（postgres=require、mysql=tls、sqlserver=encrypt 并验证证书）。
+> mysql 的自定义 CA/客户端证书需用裸 DSN（`RegisterTLSConfig`），config 仅支持其内置模式。
 
 ### 4.2 配置文件
 
@@ -158,6 +165,14 @@ connections:
     user: sa
     database: app
     password_ref: env:MSSQL_PASSWORD
+
+  - id: ch               # ClickHouse
+    driver: clickhouse
+    host: localhost
+    port: 9000
+    user: default
+    database: app
+    password_ref: env:CLICKHOUSE_PASSWORD
 ```
 
 > **配置文件里绝不存明文密码**，只存 `password_ref`（见下一节）。
@@ -167,6 +182,7 @@ connections:
 - **postgres**：`postgres://user:pass@host:port/db?sslmode=require|disable`。
 - **mysql**：`user:pass@tcp(host:port)/db?parseTime=true[&tls=true][&charset=...]`。
 - **sqlserver**：`sqlserver://user:pass@host:port?database=db&encrypt=disable|true`。
+- **clickhouse**：`clickhouse://user:pass@host:9000/db[?secure=true]`。
 
 ---
 
@@ -246,7 +262,7 @@ s9l> \q
 | `\?` | 元命令帮助 |
 | `\q` | 退出 REPL |
 
-> 元命令依赖驱动的元数据能力；SQLite/PostgreSQL/MySQL/SQL Server 均已支持。
+> 元命令依赖驱动的元数据能力；SQLite/PostgreSQL/MySQL/SQL Server/ClickHouse 均已支持。
 
 ### 7.3 Tab 自动补全
 
