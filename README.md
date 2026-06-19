@@ -105,6 +105,7 @@ Manage connections with `s9l conn add|list|rm`.
 | `s9l history stats [--top N]` | Aggregate stats (counts, success rate, avg time, top queries) |
 | `s9l saved add\|list\|search\|rm\|run` | Manage and run saved queries |
 | `s9l saved folder add\|rm` · `folders` · `mv` | Organize saved queries into folders |
+| `s9l import <conn\|dsn> --table T --file f` | Bulk-load a CSV/JSON file into a table |
 | `s9l tui [connection]` | Launch the full-screen TUI |
 | `s9l --version` | Print version |
 

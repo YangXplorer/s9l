@@ -72,6 +72,7 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | `s9l history stats [--top N]` | 历史统计（计数/成功率/平均耗时/高频查询） |
 | `s9l saved add\|list\|search\|rm\|run` | 管理与运行收藏查询 |
 | `s9l saved folder add\|rm` · `folders` · `mv` | 收藏查询的文件夹分组 |
+| `s9l import <连接|DSN> --table T --file f` | 批量导入 CSV/JSON 到表 |
 | `s9l tui [连接]` | 启动全屏 TUI |
 | `s9l help` · `-h` · `--help` | 顶层帮助 |
 | `s9l --version` | 打印版本 |
@@ -504,7 +505,16 @@ s9l tui prod
 
 # 7. 防止误跑超长查询
 s9l prod -e "select * from huge_table" --timeout 30s
+
+# 8. 批量导入 CSV / JSON 到已存在的表
+s9l import prod --table users --file users.csv
+s9l import prod --table events --file events.json --batch 1000
 ```
+
+> **导入 `import`**：`s9l <连接|DSN> import --table T --file f [--format csv|json] [--batch N]`。
+> CSV 首行为列名、其余为字符串值；JSON 为对象数组（列取首个对象的键、排序；缺失键→NULL）。
+> 按 `--batch`（默认 500）分批多行 INSERT，占位符/标识符按方言自动适配。
+> 表需**预先存在**；导入中途出错会报告已成功行数（无整体事务回滚）。
 
 ---
 

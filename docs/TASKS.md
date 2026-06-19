@@ -384,10 +384,10 @@
 - [x] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
   - 产出：`internal/tui/export.go`——`Ctrl-E` 打开保存路径输入框（默认 `results.csv`），`Enter` 写出当前结果集、`Esc` 取消；`exportResults`(复用 `render.Write(f, fmt, lastCols, lastData)`)、`exportFormat`(按扩展名 .json/.tsv 否则 csv)；onKey 加 exportOpen 透传分支 + `Ctrl-E` 触发；keybar/help 更新。CLI 导出（`--format csv > f`）本就支持。
   - DoD：白盒 `TestExportFormat`(扩展名映射)、`TestExportResultsWritesFile`(CSV 头/行 + JSON 对象，含 NULL)、`TestShowExportNoResults`(无结果不开) ✅；核心零改动；docs 同步。
-- [ ] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
-  - 目标：把 CSV/JSON 批量导入表。
-  - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
-  - 关键考量/风险：大文件流式读取、类型推断、冲突策略(skip/replace)、参数占位符按方言；IT 用 SQLite。
+- [x] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
+  - 产出：`cmd/s9l/import.go` + run() 分派 `import`——`s9l <conn|dsn> import --table T --file f [--format csv|json] [--batch N] [--driver]`；`readCSV`(首行列名、其余字符串)/`readJSON`(对象数组、列=首对象键排序、缺失→nil)；`importRows` 分批多行 INSERT；`insertSQL`/`placeholder`(pg `$n`/sqlserver `@pn`/其余 `?`)/`quoteIdentifier`(mysql 反引号/sqlserver 方括号/其余双引号) 按方言；报告导入行数。
+  - DoD：白盒 `TestPlaceholderAndQuote`/`TestInsertSQL`(pg 多行编号/sqlite)/`TestReadCSV`/`TestReadJSON`(缺失键→nil)/`TestImportFormat` + E2E `TestRunImportCSVIntoSQLite`(经 run() 导入并 count 校验) ✅；docs(README/help/MANUAL §3·§13) 同步。
+  - 注：表需预先存在；`driver.Conn` 无事务 API，故按 batch 多行 INSERT(每批一次 Exec=一次自动提交)，中途出错报告已成功行数；NULL：JSON null→NULL、CSV 空=空串。
 - [x] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
   - 产出：`internal/history/stats.go`——`Store.Stats(ctx, topN)` 聚合 query_history（总数/成功/失败/平均耗时；按连接计数；Top-N 高频查询含次数+平均耗时）；`cmd/s9l/history.go` `runHistory` 分派 `stats`→`runHistoryStats`（`--top`，渲染总览/按连接/高频查询）。只读本地 `history.db`，核心零改动。
   - DoD：白盒 `TestStats`（总数/成功率/avg 取整/按连接排序/Top 查询 avg）、`TestStatsEmpty` ✅；CLI 实测输出正确 ✅；docs(README/MANUAL §3·§9) 同步 ✅。

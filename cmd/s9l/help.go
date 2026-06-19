@@ -12,8 +12,9 @@ Usage:
   s9l <connection|dsn> -e "SQL"     run a query and exit
   s9l <connection|dsn>              start the interactive REPL
   s9l tui [connection]              launch the full-screen TUI
+  s9l import <conn|dsn> --table T --file f   bulk-load a CSV/JSON file
   s9l conn    <list|add|rm>         manage named connections
-  s9l history [--limit N]           show recent query history
+  s9l history [--limit N|stats]     recent query history / stats
   s9l saved   <add|list|search|rm|run>   manage and run saved queries
   s9l saved   <folder|folders|mv>        organize saved queries in folders
   s9l help | --version
