@@ -121,6 +121,13 @@ s9l conn rm pg
 | `--charset` | | 字符集（mysql 用） |
 | `--password` | | 把密码**存入系统 keychain**，并自动设置 `password_ref` |
 | `--password-ref` | | 直接指定密码引用，如 `env:PGPASSWORD` 或 `keychain://s9l/...` |
+| `--ssl-mode` | | TLS 模式（比 `--ssl` 更细）：postgres `disable\|require\|verify-ca\|verify-full`；mysql `require\|skip-verify\|preferred`；sqlserver `disable\|require\|verify-full` |
+| `--tls-ca` | | CA 证书文件（postgres、sqlserver） |
+| `--tls-cert` `--tls-key` | | 客户端证书/私钥（仅 postgres） |
+
+> **TLS 细化**：`--ssl` 是开关（等价 `ssl-mode` 的 require/verify 默认）；`--ssl-mode` 精确控制。
+> `ssl: true` 行为不变（postgres=require、mysql=tls、sqlserver=encrypt 并验证证书）。
+> mysql 的自定义 CA/客户端证书需用裸 DSN（`RegisterTLSConfig`），config 仅支持其内置模式。
 
 ### 4.2 配置文件
 

@@ -374,13 +374,10 @@
     - 连接编排（`cmd/s9l/main.go:resolveTarget` 与 `internal/tui` connect 路径）：若有 ssh 配置→先起隧道→把 DSN 的 host:port 改写为本地转发地址→`driver.Open`→连接关闭时拆隧道。**driver 接口不变**，仅在"打开连接"这层插入隧道（小幅触碰编排）。
     - `internal/secret`：SSH 密码/私钥 passphrase 复用 `SecretStore`（`ssh_password_ref`/`ssh_key_ref`）。
   - 关键考量/风险：**必须校验 known_hosts**（默认不盲信主机密钥）；支持私钥(含 passphrase)/密码/`ssh-agent` 三种认证；隧道生命周期绑定连接；IT 用容器化 sshd + db。
-- [ ] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
-  - 目标：比当前布尔 `ssl` 更细——CA 校验、客户端证书(mTLS)、各驱动 sslmode/tls 模式。
-  - 需要修改：
-    - `internal/config/connection.go`：增 `tls_ca/tls_cert/tls_key/tls_server_name/ssl_mode`（保留 `ssl: true` 向后兼容→等价 `require`）。
-    - DSN 构建：postgres 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql 用 `mysql.RegisterTLSConfig(name, *tls.Config)` 后 DSN 带 `tls=<name>`；sqlserver `encrypt`/`trustServerCertificate`。
-    - 可新增 `internal/config` 内小助手：由文件路径构建 `*tls.Config`。
-  - 关键考量/风险：默认推荐 `verify-full`；mysql 的 RegisterTLSConfig 是全局注册需在 Open 前调用；证书路径错误要清晰报错。
+- [x] **B-2 TLS 配置（CA/客户端证书、sslmode 细化）** · ✅ · 预估 1.5–2d
+  - 产出：`internal/config/connection.go` 增 `SSLMode/TLSCA/TLSCert/TLSKey`（`ssl_mode/tls_ca/tls_cert/tls_key`）；`sslMode(whenOn)` 解析（SSLMode 优先，否则 SSL→whenOn/disable）；`validateTLS` 对不支持驱动清晰报错。postgres DSN 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql `mysqlTLS` 映射 `tls`（内置模式，自定义证书报错改用裸 DSN）；sqlserver `encrypt`+`trustservercertificate`（require=加密不校验）+`certificate`(CA)。`conn add` 加 `--ssl-mode/--tls-ca/--tls-cert/--tls-key`。**`ssl: true` 行为不变**（pg=require、mysql=tls=true、sqlserver=encrypt 并校验）。
+  - DoD：白盒 `TestDSNTLS`（pg sslmode+CA+客户端证书精确 DSN；mysql 各模式→tls/disable 省略；mysql 证书报错；sqlserver ssl:true=encrypt 校验、ssl_mode=require=trust+CA；sqlserver 客户端证书报错）+ 既有 `TestDSN` 向后兼容仍 PASS ✅；docs(MANUAL §4、README) 同步。核心层零改动（仅 config + cmd flag）。
+  - 注：TLS 需真实证书/服务器做端到端，本环境无法 live；以 DSN 字符串断言固定安全相关映射（同既有 DSN 测试方式），供评审。mysql 自定义证书/客户端证书留裸 DSN。
 - [ ] **B-3 AWS RDS IAM Auth（临时 token 连接）** · ⚠️ · 预估 2d
   - 目标：用 IAM 生成 ~15 分钟临时 token 作为 RDS/Aurora(pg/mysql) 的密码。
   - 需要修改：

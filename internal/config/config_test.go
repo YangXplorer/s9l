@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/YangXplorer/s9l/internal/config"
@@ -120,5 +121,56 @@ func TestDSN(t *testing.T) {
 
 	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mongodb"}).DSN(""); err == nil {
 		t.Fatal("unimplemented driver should error")
+	}
+}
+
+func TestDSNTLS(t *testing.T) {
+	// postgres: ssl_mode + CA/client cert map to libpq params.
+	pg := config.ConnectionConfig{ID: "x", Driver: "postgres", Host: "db", Port: 5432, User: "dev", Database: "app",
+		SSLMode: "verify-full", TLSCA: "/ca.pem", TLSCert: "/c.pem", TLSKey: "/k.pem"}
+	got, err := pg.DSN("")
+	if err != nil {
+		t.Fatalf("pg tls: %v", err)
+	}
+	want := "postgres://dev@db:5432/app?sslcert=%2Fc.pem&sslkey=%2Fk.pem&sslmode=verify-full&sslrootcert=%2Fca.pem"
+	if got != want {
+		t.Fatalf("pg tls DSN:\n got %s\nwant %s", got, want)
+	}
+
+	// mysql: ssl_mode maps to the tls parameter.
+	for mode, tls := range map[string]string{"require": "true", "skip-verify": "skip-verify", "preferred": "preferred", "disable": ""} {
+		my := config.ConnectionConfig{ID: "x", Driver: "mysql", Host: "db", Port: 3306, User: "u", Database: "app", SSLMode: mode}
+		got, err := my.DSN("p")
+		if err != nil {
+			t.Fatalf("mysql %s: %v", mode, err)
+		}
+		wantHas := tls != ""
+		if has := strings.Contains(got, "tls="+tls); wantHas && !has {
+			t.Errorf("mysql ssl_mode=%s → %q, want tls=%s", mode, got, tls)
+		}
+		if mode == "disable" && strings.Contains(got, "tls=") {
+			t.Errorf("mysql disable should omit tls: %q", got)
+		}
+	}
+
+	// mysql with cert files is rejected (needs a raw DSN).
+	if _, err := (config.ConnectionConfig{ID: "x", Driver: "mysql", TLSCA: "/ca.pem"}).DSN(""); err == nil {
+		t.Error("mysql with tls_ca should error")
+	}
+
+	// sqlserver: ssl:true verifies (encrypt=true, no trust); ssl_mode=require skips verify.
+	msVerify := config.ConnectionConfig{ID: "x", Driver: "sqlserver", Host: "db", Port: 1433, User: "sa", Database: "app", SSL: true}
+	d, _ := msVerify.DSN("")
+	if !strings.Contains(d, "encrypt=true") || strings.Contains(d, "trustservercertificate") {
+		t.Errorf("sqlserver ssl:true should verify (encrypt=true, no trust): %q", d)
+	}
+	msReq := config.ConnectionConfig{ID: "x", Driver: "sqlserver", Host: "db", User: "sa", Database: "app", SSLMode: "require", TLSCA: "/ca.pem"}
+	d, _ = msReq.DSN("")
+	if !strings.Contains(d, "trustservercertificate=true") || !strings.Contains(d, "certificate=%2Fca.pem") {
+		t.Errorf("sqlserver require+ca: %q", d)
+	}
+	// sqlserver client cert rejected.
+	if _, err := (config.ConnectionConfig{ID: "x", Driver: "sqlserver", TLSCert: "/c.pem"}).DSN(""); err == nil {
+		t.Error("sqlserver with client cert should error")
 	}
 }
