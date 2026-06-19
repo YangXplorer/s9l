@@ -94,6 +94,12 @@ scripts prefer `--password-ref env:PGPASSWORD`.)
 
 Manage connections with `s9l conn add|list|rm`.
 
+**TLS**: beyond `--ssl`, use `--ssl-mode` for finer control (postgres
+`require|verify-ca|verify-full`, mysql `skip-verify|preferred`, sqlserver
+`require|verify-full`) and `--tls-ca` / `--tls-cert` / `--tls-key` for a CA and
+client certificate (CA: postgres & SQL Server; client cert: postgres). `ssl:
+true` keeps its previous behavior.
+
 ## Commands
 
 | Command | Description |
