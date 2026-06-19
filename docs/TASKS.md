@@ -381,9 +381,9 @@
   - 附带修复：`previewQuery` 方言化——SQL Server 用 `SELECT TOP n`（T-SQL 无 `LIMIT`），其余 `LIMIT n`，修正此前 TUI 预览在 SQL Server 上必失败的隐患；`qualifyTable` 跨库时 `库.表` 限定。
   - DoD：白盒 `TestLoadSchemaMultiDB`(fake browser conn→库节点→展开懒加载→`tableRef{app,users}`)、`TestPreviewQuery`(TOP/LIMIT)、`TestQualifyTable`(限定/单段)；既有 sqlite 单级 `TestLoadSchemaShowsTables` 适配 `tableRef` ✅；mysql IT `TestMetadata` 增 `TablesIn(other)` 跨库列表(CI 真实容器) ✅；-short/lint/build 全绿 ✅。
   - 注：sqlserver 多级(三段名+schema)与 pg schema 级浏览留后续；本次聚焦 mysql(用户实际痛点) + 修复 SQL Server 预览方言。
-- [ ] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
-  - 现状：CLI `s9l <conn> -e "..." --format csv > f` 已能导出。
-  - 需要修改：TUI Results 面板加 `e` 导出当前结果集到文件（CSV/JSON，**复用 `internal/render`**）；选路径/格式的小浮层。核心零改动。
+- [x] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
+  - 产出：`internal/tui/export.go`——`Ctrl-E` 打开保存路径输入框（默认 `results.csv`），`Enter` 写出当前结果集、`Esc` 取消；`exportResults`(复用 `render.Write(f, fmt, lastCols, lastData)`)、`exportFormat`(按扩展名 .json/.tsv 否则 csv)；onKey 加 exportOpen 透传分支 + `Ctrl-E` 触发；keybar/help 更新。CLI 导出（`--format csv > f`）本就支持。
+  - DoD：白盒 `TestExportFormat`(扩展名映射)、`TestExportResultsWritesFile`(CSV 头/行 + JSON 对象，含 NULL)、`TestShowExportNoResults`(无结果不开) ✅；核心零改动；docs 同步。
 - [ ] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
   - 目标：把 CSV/JSON 批量导入表。
   - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
