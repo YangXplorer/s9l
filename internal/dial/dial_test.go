@@ -29,6 +29,30 @@ func TestOpenNoSSH(t *testing.T) {
 	}
 }
 
+// OpenWithPassword uses the given password directly (no store lookup) — the
+// "test before save" path where the password isn't in the store yet.
+func TestOpenWithPasswordSQLite(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "d.db")
+	cc := config.ConnectionConfig{ID: "x", Driver: "sqlite", Database: db}
+
+	_, closer, err := dial.OpenWithPassword(context.Background(), cc, secret.NewMemory(), "ignored-for-sqlite")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := closer(); err != nil {
+		t.Errorf("close: %v", err)
+	}
+}
+
+// An empty password falls back to store/ref resolution, so a bad ref still errors.
+func TestOpenWithPasswordEmptyFallsBack(t *testing.T) {
+	cc := config.ConnectionConfig{ID: "x", Driver: "postgres", Host: "h", User: "u", Database: "d",
+		PasswordRef: "env:S9L_DEFINITELY_UNSET_VAR"}
+	if _, _, err := dial.OpenWithPassword(context.Background(), cc, secret.NewMemory(), ""); err == nil {
+		t.Error("empty password should fall back to ref resolution and error on the unset ref")
+	}
+}
+
 // A missing password reference surfaces as an error (not a panic).
 func TestOpenPasswordRefError(t *testing.T) {
 	cc := config.ConnectionConfig{ID: "x", Driver: "postgres", Host: "h", User: "u", Database: "d",

@@ -34,7 +34,23 @@ func Open(ctx context.Context, cc config.ConnectionConfig, store secret.SecretSt
 	if err != nil {
 		return nil, nil, fmt.Errorf("connection %q: %w", cc.ID, err)
 	}
+	return openResolved(ctx, cc, store, password)
+}
 
+// OpenWithPassword opens using an explicit, already-known password — used by the
+// TUI's "test before save" flow, where the typed password is not yet in the
+// secret store. An empty password falls back to Open's store/ref resolution.
+func OpenWithPassword(ctx context.Context, cc config.ConnectionConfig, store secret.SecretStore, password string) (driver.Conn, func() error, error) {
+	if password == "" {
+		return Open(ctx, cc, store)
+	}
+	return openResolved(ctx, cc, store, password)
+}
+
+// openResolved is the shared body of Open/OpenWithPassword: it sets up an SSH
+// tunnel when configured and opens the driver against the (possibly tunneled)
+// DSN built from the given password.
+func openResolved(ctx context.Context, cc config.ConnectionConfig, store secret.SecretStore, password string) (driver.Conn, func() error, error) {
 	closeTunnel := func() error { return nil }
 	if cc.HasSSH() {
 		tcfg, terr := sshConfig(cc, store)
