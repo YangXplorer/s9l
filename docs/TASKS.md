@@ -313,6 +313,29 @@
 
 ---
 
+## Phase 5 — TUI 可读性与操作性微调（目标 v0.8，按用户反馈，优先）
+
+预估合计：~1 人周。延续原则：**只改 `internal/tui/`，核心零改动**；白盒 + SimulationScreen 冒烟 + 手动清单。背景：T4-1 把全局文字/背景设为终端默认后，tview 默认选中样式塌缩成「默认 on 默认」不可读；输入框/模态沿用 tview 默认亮蓝 `ContrastBackgroundColor` 过于刺眼。
+
+- [x] **T5-1 配色可读性：选中行 / 输入框 / 模态背景**
+  - 产出：`theme.go` `Theme` 增 `Selection`(浅灰)/`SelectionText`(黑)/`Field`(浅灰)/`FieldText`(黑)/`Contrast`(暗 slate 回退)；`selectionStyle()`(浅底深字，NO_COLOR→反显)；`applyStyles` 设 `ContrastBackgroundColor=Contrast`+`InverseTextColor`。Results `SetSelectedStyle(selectionStyle())`；`treeNode()` 给每个可选节点设 `SetSelectedTextStyle(selectionStyle())`。交互控件显式配色：connform `Form.SetField/Button/Label*`、`/` 过滤与 `Ctrl-E` 导出 `InputField.SetFieldBackground/TextColor`、删除 `Modal.SetBackground/TextColor` 用 `Field`/`FieldText`。修复 T4-1 后选中样式塌缩为「默认 on 默认」不可读的问题。
+  - DoD：白盒 `TestSelectionStyleReadable`(fg≠bg、= Selection/SelectionText)、`TestSelectionStyleNoColorReverses` ✅；真实 pty 无崩溃；核心零改动。
+  - 依赖：T4-1 · 预估：0.75d
+- [x] **T5-2 Connections 去树线 + 展开指示符**
+  - 产出：`connTree`/`schema` `SetGraphics(false)`(去 tview 树连线)；`setConnNodeLabel`——连接节点有数据库子节点时按展开态加 `▾ `/`▸ `(否则 2 空格对齐位)，`onConnSelect` 连接节点已连则切换展开并更新三角；数据库/表为叶子无三角。
+  - DoD：白盒 `TestConnNodeExpandIndicator`(无子→无三角、展开→▾、折叠→▸) ✅；真实 SQLite pty——树连接符 ├/└ 计数 0、退出 exit 0 ✅；核心零改动。
+  - 依赖：T4-2 · 预估：0.5d
+- [x] **T5-3 Connections 上下移动选择（确认）**
+  - 产出：`connTree` 为 `tview.TreeView`，方向键原生 + 既有 vim `j/k`→Down/Up 在 Connections 生效；`populateConnections` 设首节点为 current；连接展开数据库后可在连接/库间上下移动，当前行经 T5-1 选中样式高亮。
+  - DoD：SQLite pty 内 `j` 移动不崩、当前行高亮可见(T5-1)；核心零改动。· 依赖：T5-1、T4-2 · 预估：0.25d
+- [x] **T5-4 使用手册 / README 同步**
+  - 产出：`docs/MANUAL.md` §11 Connections 说明加「无树线 + 开合三角 `▾`/`▸` + 上下选择」；本轮键位无新增（沿用 Enter/j/k）。
+  - DoD：文档与实现一致 ✅。· 依赖：T5-1/T5-2/T5-3 · 预估：0.25d
+
+**Phase 5 验收**：选中行/输入框/模态清晰可读且不刺眼；Connections 无树线、有开合三角、可上下选择；文档同步。核心零改动；CI 绿。
+
+---
+
 ## Phase 4 — TUI 交互重构（目标 v0.7）
 
 预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
@@ -381,15 +404,16 @@
   - 附带修复：`previewQuery` 方言化——SQL Server 用 `SELECT TOP n`（T-SQL 无 `LIMIT`），其余 `LIMIT n`，修正此前 TUI 预览在 SQL Server 上必失败的隐患；`qualifyTable` 跨库时 `库.表` 限定。
   - DoD：白盒 `TestLoadSchemaMultiDB`(fake browser conn→库节点→展开懒加载→`tableRef{app,users}`)、`TestPreviewQuery`(TOP/LIMIT)、`TestQualifyTable`(限定/单段)；既有 sqlite 单级 `TestLoadSchemaShowsTables` 适配 `tableRef` ✅；mysql IT `TestMetadata` 增 `TablesIn(other)` 跨库列表(CI 真实容器) ✅；-short/lint/build 全绿 ✅。
   - 注：sqlserver 多级(三段名+schema)与 pg schema 级浏览留后续；本次聚焦 mysql(用户实际痛点) + 修复 SQL Server 预览方言。
-- [ ] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
-  - 现状：CLI `s9l <conn> -e "..." --format csv > f` 已能导出。
-  - 需要修改：TUI Results 面板加 `e` 导出当前结果集到文件（CSV/JSON，**复用 `internal/render`**）；选路径/格式的小浮层。核心零改动。
-- [ ] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
-  - 目标：把 CSV/JSON 批量导入表。
-  - 需要修改：新增 `cmd/s9l/import.go`——`s9l <conn> import --table T --file data.csv [--format csv|json] [--batch N]`；解析文件→列映射→事务内批量 `INSERT`(复用 `driver.Conn.Exec` + 参数绑定)；报告导入行数。
-  - 关键考量/风险：大文件流式读取、类型推断、冲突策略(skip/replace)、参数占位符按方言；IT 用 SQLite。
-- [ ] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
-  - 需要修改：`internal/history` 加聚合查询（按 SQL/连接 GROUP BY：高频查询 Top N、平均耗时、成功率、按连接计数）；`cmd/s9l/history.go` 加 `stats` 子命令渲染。只读本地 `history.db`，核心零改动。
+- [x] **B-8 结果导出（CLI 已有 / TUI 新增）** · ✅ · 预估 0.75d
+  - 产出：`internal/tui/export.go`——`Ctrl-E` 打开保存路径输入框（默认 `results.csv`），`Enter` 写出当前结果集、`Esc` 取消；`exportResults`(复用 `render.Write(f, fmt, lastCols, lastData)`)、`exportFormat`(按扩展名 .json/.tsv 否则 csv)；onKey 加 exportOpen 透传分支 + `Ctrl-E` 触发；keybar/help 更新。CLI 导出（`--format csv > f`）本就支持。
+  - DoD：白盒 `TestExportFormat`(扩展名映射)、`TestExportResultsWritesFile`(CSV 头/行 + JSON 对象，含 NULL)、`TestShowExportNoResults`(无结果不开) ✅；核心零改动；docs 同步。
+- [x] **B-9 数据导入（CSV/JSON 批量）** · ✅ · 预估 1.5–2d
+  - 产出：`cmd/s9l/import.go` + run() 分派 `import`——`s9l <conn|dsn> import --table T --file f [--format csv|json] [--batch N] [--driver]`；`readCSV`(首行列名、其余字符串)/`readJSON`(对象数组、列=首对象键排序、缺失→nil)；`importRows` 分批多行 INSERT；`insertSQL`/`placeholder`(pg `$n`/sqlserver `@pn`/其余 `?`)/`quoteIdentifier`(mysql 反引号/sqlserver 方括号/其余双引号) 按方言；报告导入行数。
+  - DoD：白盒 `TestPlaceholderAndQuote`/`TestInsertSQL`(pg 多行编号/sqlite)/`TestReadCSV`/`TestReadJSON`(缺失键→nil)/`TestImportFormat` + E2E `TestRunImportCSVIntoSQLite`(经 run() 导入并 count 校验) ✅；docs(README/help/MANUAL §3·§13) 同步。
+  - 注：表需预先存在；`driver.Conn` 无事务 API，故按 batch 多行 INSERT(每批一次 Exec=一次自动提交)，中途出错报告已成功行数；NULL：JSON null→NULL、CSV 空=空串。
+- [x] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
+  - 产出：`internal/history/stats.go`——`Store.Stats(ctx, topN)` 聚合 query_history（总数/成功/失败/平均耗时；按连接计数；Top-N 高频查询含次数+平均耗时）；`cmd/s9l/history.go` `runHistory` 分派 `stats`→`runHistoryStats`（`--top`，渲染总览/按连接/高频查询）。只读本地 `history.db`，核心零改动。
+  - DoD：白盒 `TestStats`（总数/成功率/avg 取整/按连接排序/Top 查询 avg）、`TestStatsEmpty` ✅；CLI 实测输出正确 ✅；docs(README/MANUAL §3·§9) 同步 ✅。
 - [ ] **B-11 历史/收藏云同步** · 🔴 · 预估：设计 needed，大
   - 目标：把 `history.db`/收藏同步到远端（git 仓库 / S3 / 同步端点）。
   - 决策点：需选后端 + 认证 + **隐私设计**（历史含 SQL，可能含敏感信息）。建议**暂缓**，优先做 B-10 本地统计；如要做，先出设计与隐私评审。

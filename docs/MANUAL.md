@@ -2,7 +2,7 @@
 
 > 终端数据库客户端。一条短命令连上数据库跑查询——简单、可脚本化、易扩展。
 > 当前支持数据库：**SQLite · PostgreSQL · MySQL · SQL Server**（纯 Go 驱动，单静态二进制，免 CGO）。
-> 本文覆盖 v0.5.0 的全部命令、输出形式、全屏 TUI 与配置。命令速查见 [README](../README.md)，路线图见 [PLAN.md](./PLAN.md)。
+> 本文覆盖 v0.7.0 的全部命令、输出形式、全屏 TUI 与配置。命令速查见 [README](../README.md)，路线图见 [PLAN.md](./PLAN.md)。
 
 ---
 
@@ -39,7 +39,7 @@ go install github.com/YangXplorer/s9l/cmd/s9l@latest
 验证安装：
 
 ```bash
-s9l --version       # 形如：s9l 0.5.0 (commit abc1234, built 2026-06-18)
+s9l --version       # 形如：s9l 0.7.0 (commit abc1234, built 2026-06-19)
 s9l help            # 顶层帮助概览
 ```
 
@@ -69,8 +69,10 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | `s9l <连接|DSN>` | 进入交互式 REPL |
 | `s9l conn list\|add\|rm` | 管理命名连接 |
 | `s9l history [--limit N]` | 查看最近查询历史 |
+| `s9l history stats [--top N]` | 历史统计（计数/成功率/平均耗时/高频查询） |
 | `s9l saved add\|list\|search\|rm\|run` | 管理与运行收藏查询 |
 | `s9l saved folder add\|rm` · `folders` · `mv` | 收藏查询的文件夹分组 |
+| `s9l import <连接|DSN> --table T --file f` | 批量导入 CSV/JSON 到表 |
 | `s9l tui [连接]` | 启动全屏 TUI |
 | `s9l help` · `-h` · `--help` | 顶层帮助 |
 | `s9l --version` | 打印版本 |
@@ -80,7 +82,7 @@ s9l 同一个二进制提供三种用法，按使用场景选择：
 | 参数 | 含义 |
 |------|------|
 | `-e "SQL"` | 执行 SQL 后退出（不带则进 REPL） |
-| `--driver NAME` | 裸 DSN 使用的驱动，默认 `sqlite`（可选 `sqlite`/`postgres`/`mysql`） |
+| `--driver NAME` | 裸 DSN 使用的驱动，默认 `sqlite`（可选 `sqlite`/`postgres`/`mysql`/`sqlserver`） |
 | `--format FMT` | 输出格式：`table` \| `json` \| `csv` \| `tsv`。默认：TTY→`table`，管道→`tsv` |
 | `--max-col-width N` | 把表格单元格截断到 N 个字符（仅 `table` 格式；0=不限） |
 | `--timeout DUR` | 超过该时长则中断查询（如 `30s`；0=不限）。`Ctrl-C` 也能取消 |
@@ -111,7 +113,7 @@ s9l conn rm pg
 | 参数 | 必填 | 说明 |
 |------|:---:|------|
 | `--id` | ✅ | 连接 id（唯一），后续 `s9l <id>` 用它引用 |
-| `--driver` | ✅ | `sqlite` / `postgres` / `mysql` |
+| `--driver` | ✅ | `sqlite` / `postgres` / `mysql` / `sqlserver` |
 | `--name` | | 显示名（备注用） |
 | `--host` `--port` `--user` | | 网络数据库的连接信息 |
 | `--database` | | 数据库名；**SQLite 时填文件路径** |
@@ -148,6 +150,14 @@ connections:
     database: shop
     charset: utf8mb4
     password_ref: keychain://s9l/connection.my.password
+
+  - id: ms               # SQL Server
+    driver: sqlserver
+    host: localhost
+    port: 1433
+    user: sa
+    database: app
+    password_ref: env:MSSQL_PASSWORD
 ```
 
 > **配置文件里绝不存明文密码**，只存 `password_ref`（见下一节）。
@@ -156,6 +166,7 @@ connections:
 - **sqlite**：`database` 即文件路径。
 - **postgres**：`postgres://user:pass@host:port/db?sslmode=require|disable`。
 - **mysql**：`user:pass@tcp(host:port)/db?parseTime=true[&tls=true][&charset=...]`。
+- **sqlserver**：`sqlserver://user:pass@host:port?database=db&encrypt=disable|true`。
 
 ---
 
@@ -235,7 +246,7 @@ s9l> \q
 | `\?` | 元命令帮助 |
 | `\q` | 退出 REPL |
 
-> 元命令依赖驱动的元数据能力；SQLite/PostgreSQL/MySQL 均已支持。
+> 元命令依赖驱动的元数据能力；SQLite/PostgreSQL/MySQL/SQL Server 均已支持。
 
 ### 7.3 Tab 自动补全
 
@@ -311,6 +322,15 @@ s9l history --limit 0    # 全部
 ```
 
 字段依次为：**执行时间 · 状态(ok/ERR) · 耗时(ms) · 连接 id · SQL（折成单行）**。
+
+统计（只读聚合本地历史）：
+
+```bash
+s9l history stats            # 默认 Top 10 高频查询
+s9l history stats --top 20
+```
+
+输出：总数 / 成功 / 失败 / 成功率 / 平均耗时；**按连接计数**；**最高频查询**（次数 · 平均耗时 · SQL）。
 
 ---
 
@@ -395,7 +415,7 @@ s9l tui pg       # 直接连上命名连接 pg
 ```
 
 四个面板：
-- **Connections（左上）**：`config.yaml` 里的连接树。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
+- **Connections（左上）**：`config.yaml` 里的连接树（无树形连线；可展开的连接前显示开合三角 `▾`/`▸`；`↑`/`↓` 或 `j`/`k` 上下选择）。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
 - **Schema（左下）**：当前所选数据库的**表列表**。`Enter` 预览选中表（自动按方言取前 200 行）。按 `/` **检索表名**（子串、大小写不敏感，状态栏显示 `tables M/N`）。
 - **Results（右上）**：查询/预览结果表格。按 `/` **过滤结果行**（跨列子串）。
 - **SQL (F5 run)（右下）**：SQL 编辑器，`F5` 执行。
@@ -416,6 +436,7 @@ s9l tui pg       # 直接连上命名连接 pg
 | `Ctrl-R` | 打开查询历史；`Enter` 把选中项**载入编辑器** |
 | `Ctrl-F` | 打开收藏查询；`Enter` 直接**运行**选中项 |
 | `Ctrl-S` | 把编辑器里的 SQL **存为收藏** |
+| `Ctrl-E` | 把当前结果**导出到文件**（按扩展名 .csv/.json/.tsv 选格式） |
 | `?` | 显示/关闭帮助浮层 |
 | `q` / `Ctrl-C` | 退出 TUI |
 
@@ -484,7 +505,16 @@ s9l tui prod
 
 # 7. 防止误跑超长查询
 s9l prod -e "select * from huge_table" --timeout 30s
+
+# 8. 批量导入 CSV / JSON 到已存在的表
+s9l import prod --table users --file users.csv
+s9l import prod --table events --file events.json --batch 1000
 ```
+
+> **导入 `import`**：`s9l <连接|DSN> import --table T --file f [--format csv|json] [--batch N]`。
+> CSV 首行为列名、其余为字符串值；JSON 为对象数组（列取首个对象的键、排序；缺失键→NULL）。
+> 按 `--batch`（默认 500）分批多行 INSERT，占位符/标识符按方言自动适配。
+> 表需**预先存在**；导入中途出错会报告已成功行数（无整体事务回滚）。
 
 ---
 

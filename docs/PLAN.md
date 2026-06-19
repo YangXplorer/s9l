@@ -109,6 +109,7 @@ type SecretStore interface {
 - **v0.5（Phase T）**：全屏 TUI（lazygit 式，连接/树/结果/编辑器/历史/收藏，✅）
 - **v0.6（≈ Phase 3）**：TUI 强化（lazygit 风格配色/布局、Connections 图标、SQL 编辑器扩大、界面内新增连接、结果过滤器）+ 新增 **SQL Server** 驱动；v0.6.1 增 TUI 连接编辑/删除 + MySQL 库→表树
 - **v0.7（≈ Phase 4）**：TUI 交互重构——背景与终端/lazygit 一致；Connections 可展开到数据库；Schema 显示当前库表并可检索；使用手册同步
+- **v0.8（≈ Phase 5）**：TUI 可读性/操作性微调——选中行/输入框/模态配色调浅可读；Connections 去树线 + 开合三角 + 上下选择
 - **后续 Backlog（未排期）**：SSH Tunnel + TLS 配置 + AWS RDS IAM Auth + 更多数据库
 
 ## 需求拆解

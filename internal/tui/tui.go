@@ -79,6 +79,7 @@ type App struct {
 	filterOpen   bool
 	connFormOpen bool
 	confirmOpen  bool
+	exportOpen   bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -135,11 +136,11 @@ func New(opts Options) *App {
 }
 
 func (a *App) buildLayout() {
-	a.connTree = tview.NewTreeView().SetTopLevel(1) // hide the synthetic root
+	a.connTree = tview.NewTreeView().SetTopLevel(1).SetGraphics(false) // hide root + tree lines
 	a.connTree.SetSelectedFunc(a.onConnSelect)
 	a.titledPanel(a.connTree.Box, "[1] Connections")
 
-	a.schema = tview.NewTreeView()
+	a.schema = tview.NewTreeView().SetGraphics(false)
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
@@ -150,11 +151,8 @@ func (a *App) buildLayout() {
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
 	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
 
-	// Selected-row highlight (skipped under NO_COLOR so tview's default reverse
-	// styling keeps the selection visible on monochrome terminals).
-	if !noColor() {
-		a.results.SetSelectedStyle(tcell.StyleDefault.Background(a.theme.Selection).Foreground(tcell.ColorBlack))
-	}
+	// Selected-row highlight: a light bar with dark text (reverse under NO_COLOR).
+	a.results.SetSelectedStyle(a.theme.selectionStyle())
 
 	a.status = tview.NewTextView().SetDynamicColors(true)
 	a.SetStatus(defaultStatus)
@@ -185,6 +183,12 @@ func (a *App) buildLayout() {
 // titledPanel applies the bordered, titled look shared by every panel.
 func (a *App) titledPanel(b *tview.Box, title string) {
 	b.SetBorder(true).SetTitle(" " + title + " ").SetTitleColor(a.theme.Title)
+}
+
+// treeNode creates a tree node carrying the theme's selected-row style so the
+// current node is highlighted readably.
+func (a *App) treeNode(text string) *tview.TreeNode {
+	return tview.NewTreeNode(text).SetSelectedTextStyle(a.theme.selectionStyle())
 }
 
 // navPanels are the focusable panels cycled by Tab / 1-4.
@@ -256,6 +260,7 @@ const helpText = `[::b]s9l TUI[::-]
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
+  Ctrl-E            export the current results to a file (csv/json/tsv)
   Up / Down · j / k navigate within a panel
   ?                 toggle this help
   q / Ctrl-C        quit
@@ -278,28 +283,49 @@ func (a *App) populateConnections() {
 	root := tview.NewTreeNode("")
 	a.connTree.SetRoot(root)
 	for _, cc := range a.cfg.Connections {
-		root.AddChild(tview.NewTreeNode(connIcon(cc.Driver) + connDisplayName(cc)).
-			SetReference(connNodeRef{cc: cc}))
+		n := a.treeNode("").SetReference(connNodeRef{cc: cc})
+		a.setConnNodeLabel(n, cc)
+		root.AddChild(n)
 	}
 	if len(a.cfg.Connections) == 0 {
-		root.AddChild(tview.NewTreeNode("(no connections — press n to add)"))
+		root.AddChild(a.treeNode("(no connections — press n to add)"))
 	}
 	if kids := root.GetChildren(); len(kids) > 0 {
 		a.connTree.SetCurrentNode(kids[0])
 	}
 }
 
+// setConnNodeLabel sets a connection node's text: an expand indicator (▾/▸, only
+// once it has database children) + the database-type icon + the display name.
+func (a *App) setConnNodeLabel(node *tview.TreeNode, cc config.ConnectionConfig) {
+	prefix := "  "
+	if len(node.GetChildren()) > 0 {
+		if node.IsExpanded() {
+			prefix = "▾ "
+		} else {
+			prefix = "▸ "
+		}
+	}
+	node.SetText(prefix + connIcon(cc.Driver) + connDisplayName(cc))
+}
+
 // onConnSelect handles Enter in the Connections tree: a connection node connects
-// (and, for multi-database engines, expands to its databases); a database node
-// becomes the current database and refreshes the Schema panel.
+// and (for multi-database engines) expands to its databases — or, if already
+// connected, just toggles. A database node becomes the current database and
+// refreshes the Schema panel.
 func (a *App) onConnSelect(node *tview.TreeNode) {
 	switch ref := node.GetReference().(type) {
 	case connNodeRef:
-		if err := a.connect(ref.cc); err != nil {
-			return
+		if len(node.GetChildren()) == 0 {
+			if err := a.connect(ref.cc); err != nil {
+				return
+			}
+			a.loadConnDatabases(node, ref.cc)
+			node.SetExpanded(true)
+		} else {
+			node.SetExpanded(!node.IsExpanded())
 		}
-		a.loadConnDatabases(node, ref.cc)
-		node.SetExpanded(true)
+		a.setConnNodeLabel(node, ref.cc)
 	case dbNodeRef:
 		a.currentDB = ref.db
 		a.loadSchema()
@@ -328,7 +354,7 @@ func (a *App) loadConnDatabases(node *tview.TreeNode, cc config.ConnectionConfig
 		return
 	}
 	for _, db := range dbs {
-		node.AddChild(tview.NewTreeNode(db).
+		node.AddChild(a.treeNode(db).
 			SetReference(dbNodeRef{connID: cc.ID, db: db}).
 			SetColor(a.theme.Accent))
 	}
@@ -721,6 +747,7 @@ func (a *App) showFilter() {
 	}
 	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
 	in.SetChangedFunc(onChange)
+	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
 	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
 	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
 	a.app.SetFocus(in)
@@ -835,7 +862,7 @@ func (a *App) renderSchema() {
 	root := tview.NewTreeNode(label).SetColor(a.theme.Accent)
 	a.schema.SetRoot(root).SetCurrentNode(root)
 	for _, name := range filterTables(a.schemaTables, a.schemaFilter) {
-		root.AddChild(tview.NewTreeNode(name).SetReference(tableRef{db: a.currentDB, name: name}))
+		root.AddChild(a.treeNode(name).SetReference(tableRef{db: a.currentDB, name: name}))
 	}
 }
 
@@ -948,6 +975,12 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the export input is open, the InputField's done func handles
+	// Enter/Esc; pass everything (incl. j/k) through as literal text.
+	if a.exportOpen {
+		return ev
+	}
+
 	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
 	// editor (where they are text). Applies in panels and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
@@ -1007,6 +1040,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyCtrlF:
 		a.showSaved()
+		return nil
+	case tcell.KeyCtrlE:
+		a.showExport()
 		return nil
 	case tcell.KeyTab:
 		a.focusPanel((a.focusIdx + 1) % len(a.navPanels()))
