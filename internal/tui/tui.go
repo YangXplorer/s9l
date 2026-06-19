@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/secret"
@@ -92,6 +93,7 @@ type App struct {
 	onResult func() // test hook fired after a query completes (UI goroutine)
 
 	conn       driver.Conn
+	connClose  func() error // closes conn + any SSH tunnel
 	connID     string
 	driverName string
 
@@ -377,26 +379,15 @@ func (a *App) findConnNode(id string) *tview.TreeNode {
 // connect resolves the connection's password, opens it, and updates status.
 // Errors are surfaced in the status bar; the UI never crashes on a bad connect.
 func (a *App) connect(cc config.ConnectionConfig) error {
-	password, err := secret.Resolve(a.store, cc.PasswordRef)
-	if err != nil {
-		a.setError(fmt.Sprintf("connection %q: %v", cc.ID, err))
-		return err
-	}
-	dsn, err := cc.DSN(password)
-	if err != nil {
-		a.setError(err.Error())
-		return err
-	}
-	conn, err := driver.Open(context.Background(), cc.Driver, dsn)
+	conn, closer, err := dial.Open(context.Background(), cc, a.store)
 	if err != nil {
 		a.setError(err.Error())
 		return err
 	}
 
-	if a.conn != nil {
-		_ = a.conn.Close()
-	}
+	a.closeConn() // close any previous connection + tunnel
 	a.conn = conn
+	a.connClose = closer
 	a.connID = cc.ID
 	a.driverName = cc.Driver
 	a.currentDB = ""
@@ -1123,10 +1114,11 @@ func (a *App) Run() error {
 func (a *App) Stop() { a.app.Stop() }
 
 func (a *App) closeConn() {
-	if a.conn != nil {
-		_ = a.conn.Close()
-		a.conn = nil
+	if a.connClose != nil {
+		_ = a.connClose()
+		a.connClose = nil
 	}
+	a.conn = nil
 }
 
 // --- testing seams ---

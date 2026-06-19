@@ -55,16 +55,12 @@ func runImport(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	drv, dsn, err := resolveTarget(positionals[0], driverFlag)
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
-	conn, err := driver.Open(ctx, drv, dsn)
+	conn, drv, closeConn, err := openTarget(ctx, positionals[0], driverFlag)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = closeConn() }()
 
 	f, err := os.Open(file)
 	if err != nil {
