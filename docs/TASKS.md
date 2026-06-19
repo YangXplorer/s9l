@@ -334,6 +334,82 @@
 
 **Phase 5 验收**：选中行/输入框/模态清晰可读且不刺眼；Connections 无树线、有开合三角、可上下选择；文档同步。核心零改动；CI 绿。
 
+### Phase 5.1 — 二轮视觉微调（按用户截图反馈，优先）
+
+背景：T5 落地后用户实测仍有可读性问题——选中行背景偏深、看不清内容；数据库/表节点的 Accent 着色 + 缩进让 Connections/Schema 看起来仍是「彩色树形」；输入框背景偏深。延续原则：**只改 `internal/tui/`，核心零改动**；白盒 + 真实 pty 冒烟。
+
+- [x] **T5.1-1 选中行 / 输入框背景更浅、文字清晰**（反馈 1·4·5）
+  - 产出：`theme.go` 把 `Selection`(0xc0c0c0→更浅，如 0xe4e4e4)、`Field`(0xcfcfcf→更浅，如 0xeaeaea) 调浅；保持 `SelectionText`/`FieldText` 为黑，确保浅底深字高对比（兼顾真彩降采样终端）。
+  - DoD：白盒 `TestSelectionStyleReadable`/`TestSelectionStyleNoColorReverses` 仍绿（断言 fg≠bg）；真实 pty 选中行/输入框文字清晰可读；核心零改动。
+  - 依赖：T5-1 · 预估：0.25d
+- [x] **T5.1-2 Connections/Schema 去「橙色树形」**（反馈 2）
+  - 产出：① 数据库子节点去掉 `SetColor(Accent)`（line 361），用终端默认色，消除「橙色」观感；② Schema 面板 `SetTopLevel(1)`，隐藏着色的库根节点、表列表扁平显示（无树缩进）；③ 展开/折叠三角 `▾`/`▸` 仅保留在「上层」连接节点（已有 `setConnNodeLabel`）；叶子（库/表）无三角。
+  - DoD：白盒 `TestConnNodeExpandIndicator` 仍绿；新增/调整断言：db 节点无 Accent 色、schema 顶层为表（非库根）；真实 SQLite pty 树连接符计数 0、退出 exit 0；核心零改动。
+  - 依赖：T5-2 · 预估：0.5d
+- [x] **T5.1-3 Connections 上下移动选择 + 高亮可见（确认/修复）**（反馈 3）
+  - 产出：确认方向键 + vim `j/k`→Down/Up 在 Connections 生效；`populateConnections` 首节点为 current；高亮经 T5.1-1 浅底深字清晰可见。若发现移动无响应（如焦点/SetTopLevel 边界），定位并修复。
+  - DoD：SQLite pty 内 `j`/`↓` 移动不崩、当前行高亮可见；核心零改动。· 依赖：T5.1-1 · 预估：0.25d
+- [x] **T5.1-4 文档同步**
+  - 产出：若 Connections/Schema 观感（去色/扁平）有用户可见变化，`docs/MANUAL.md` §11 相应更新；键位无新增。
+  - DoD：文档与实现一致。· 依赖：T5.1-1/2/3 · 预估：0.1d
+
+**Phase 5.1 验收**：选中行/输入框浅底深字清晰；Connections/Schema 无彩色树形观感、开合三角仅在上层节点、可上下选择并清晰高亮；文档同步。核心零改动；CI 绿。
+
+### Phase 5.2 — 三轮微调 + 连接测试（按用户实测截图，优先）
+
+背景：5.1 落地后实测，选中行/输入框背景仍偏深，需再调浅；New connection 表单缺少「保存前测试连接」能力，易存错配置。原则不变：**TUI 只改 `internal/tui/`**；`dial` 为 CLI/TUI 共享辅助层（非 driver/config/secret/history 核心），允许向后兼容地新增函数。
+
+- [x] **T5.2-1 选中行 / 输入框配色（多轮实测后收敛为暗色系）**（反馈：颜色还要再浅些 → 后续统一暗色）
+  - 产出：经多轮实测最终统一为**暗色系**：`Selection`=`Field`=暗灰 0x2a2a2a、`SelectionText`=`FieldText`=白；Connections/Schema/Results 的选中高亮与表单输入框**同色**（暗底白字），与暗色卡片（`Surface` 0x1e1e1e）形成层次而不刺眼。表单输入框宽度设 0（占满卡片、消除右侧暗带）。
+  - DoD：`TestSelectionStyleReadable`/`TestSelectionStyleNoColorReverses` 仍绿（fg≠bg）；真实 pty 选中行/输入框暗底白字清晰、与表单同色；核心零改动。
+  - 依赖：T5.1-1 · 预估：0.1d
+- [x] **T5.2-2 `dial.OpenWithPassword`（用未保存的明文密码试连）**
+  - 产出：`internal/dial/dial.go` 抽出 `openResolved(ctx, cc, store, password)` 公共体；`Open` 维持原行为（经 `secret.Resolve` 解析 ref）；新增 `OpenWithPassword(ctx, cc, store, password)`——password 非空时直接用之（表单「保存前测试」场景密码尚未入库），为空时回退 `Open`。
+  - DoD：白盒 `TestOpenWithPasswordSQLite`（sqlite 文件库试连成功 + close）、`TestOpenWithPasswordEmptyFallsBack`（空密码走 ref 解析路径）；既有 `dial` 测试不破；CLI 行为不变。
+  - 依赖：无 · 预估：0.5d
+- [x] **T5.2-3 New connection 表单「Test」按钮**（反馈：需要 test 按钮检查输入是否正确）
+  - 产出：`connform.go` 抽出 `formConfig(form) (cc, password, err)`（从 `submitConnForm` 复用读取逻辑，不持久化）；表单加 `Test` 按钮（位于 Save/Cancel 间）：先 `validateConn`，再在 goroutine 内带 5s 超时调用 `dial.OpenWithPassword`，结果经 `QueueUpdateDraw` 回推——成功把表单标题更新为 `✓ connection OK`、失败为 `✗ <error>`（标题在模态内始终可见，状态栏被遮挡）；测试期间标题显示 `testing…`，按钮不阻塞 UI。
+  - DoD：白盒 `TestFormConfigReadsFields`（表单→cc/password 映射，含 port 非数字报错）、`TestTestConnFormSuccess`/`TestTestConnFormError`（用 fake/ sqlite 驱动 Test 路径，断言标题文案）；真实 pty `n`→填 sqlite 路径→`Test`→`✓`；核心零改动。
+  - 依赖：T5.2-2 · 预估：0.75d
+- [x] **T5.2-5 New connection 表单暗色卡片 + 增强反差**（反馈：透明背景透出后方内容、不清晰）
+  - 产出：表单背景透明导致后方结果/聊天透出、文字不清晰。`theme.go` 加 `Surface`（不透明暗色卡片 0x121212；NO_COLOR→默认）；`Field` 改为**比卡片略浅的暗灰 0x2a2a2a**、`FieldText` 改为白字（暗底白字，输入框与卡片有层次但不刺眼；该色为表单/过滤/导出/删除模态共享，统一暗色风）；`connform.go` `form.SetBackgroundColor(a.theme.Surface)`——白标签/标题在暗卡片上醒目、后方不再透出；保留聚焦绿框。
+  - DoD：白盒 `TestSurfaceOpaque`（Surface≠默认、NO_COLOR→默认）；真实 pty 表单为暗色卡片、输入文字清晰、不透出后方；核心零改动。
+  - 依赖：T5.2-1 · 预估：0.25d
+- [x] **T5.2-6 TUI 全面板不透明背景（消除终端透明透出）**（反馈：connection 和表同样处理、别透出后方）
+  - 产出：用户终端开启透明，桌面/聊天透过各面板（Connections 等）显得杂乱。`theme.go` 增 `Background`(0x14161a 暗底) / `PrimaryText`(0xd0d0d0 亮字)；`applyStyles` 由「`PrimitiveBackgroundColor=ColorDefault` 跟随终端」改为**不透明暗底 + 亮字**（颜色层次：背景 0x14161a < 卡片 0x1e1e1e < 选择/输入框 0x2a2a2a）。**NO_COLOR 仍回退 ColorDefault（透明/混入终端）**，保留 lazygit 式行为给需要者。取代 Phase 4 T4-1「背景跟随终端」的默认（仅彩色模式下）。
+  - DoD：白盒 `TestApplyStylesOpaqueWithColor`（彩色时 bg/fg≠默认）、`TestApplyStylesTransparentUnderNoColor`（NO_COLOR 回退默认）✅；真实 pty 各面板不再透出后方；核心零改动。
+  - 依赖：T5.2-5 · 预估：0.25d
+- [x] **T5.2-4 文档同步**
+  - 产出：`docs/MANUAL.md` 新增连接表单说明加「Test 按钮：保存前验证连接」；`docs/TUI.md` 强化节补一行。
+  - DoD：文档与实现一致。· 依赖：T5.2-1/2/3/5 · 预估：0.1d
+
+**Phase 5.2 验收**：选中行/输入框近白浅底、文字清晰；New connection 表单可在保存前一键测试连接并清晰反馈成功/失败；文档同步。TUI 核心零改动、`dial` 仅向后兼容新增；CI 绿。
+
+---
+
+## Phase 5.3 — 上下文相关 `/` 检索（按聚焦面板切换检索对象，优先）
+
+背景：`/` 已能在 **Schema 检索表**、在 **Results 过滤结果行**（均已实现）。用户希望 `/` 在 **Connections** 也生效——**检索当前连接下的数据库**；总体规则：**聚焦哪个面板，`/` 的检索对象就是该面板的内容**。原则不变：**只改 `internal/tui/`，核心零改动**；纯函数 + 白盒 + SimulationScreen/pty 冒烟。
+
+现状（`showFilter`/`hideFilter`）已按 `focusIdx` 二分（Schema=1 → 表；其余 → 结果行）。本阶段把分派改为**三态**并补齐 Connections（数据库）这一路。
+
+- [x] **T5.3-1 Connections `/` 检索数据库（核心新功能）**
+  - 产出：① App 保留当前连接已加载的数据库**全量列表** `connDatabases []string` + 其所属 `connDBNode *tview.TreeNode`（在 `loadConnDatabases` 填充时存入）；② 复用 `filterTables`（子串、大小写不敏感，对名字通用）做 `filterDatabases`；③ `applyConnFilter(term)`：按 term 重建该连接节点的数据库子节点（保留连接节点本身与展开态、当前选中尽量保持），状态栏 `databases M/N`；④ 仅当聚焦 Connections 且**当前连接已连且为多库引擎（有数据库子节点）**时启用，否则 `SetStatus("no databases to filter")`。
+  - DoD：纯函数 `TestFilterDatabases`；白盒 `TestApplyConnFilter`（fake browser conn 连接→加载多库→`/ria`→仅匹配库为子节点、计数正确、清空恢复全量）；真实 pty 在 Connections `/` 可缩小库列表；核心零改动。
+  - 依赖：B-7（databaseBrowser/loadConnDatabases）· 预估：1d
+- [x] **T5.3-2 `showFilter`/`hideFilter` 三态分派重构**
+  - 产出：把布尔 `filterSchema` 改为 `filterTarget`（`filterConn`/`filterSchema`/`filterResults` 三态，按 `focusIdx` 0/1/其余判定）；`showFilter` 据此选 title（`Filter databases`/`Filter tables`/`Filter results`）、initial、onChange；`hideFilter(clear)` 据此清空对应过滤。保持现有 Schema/Results 行为不变。
+  - DoD：白盒 `TestShowFilterTargetByPanel`（focusIdx 0/1/2 → 对应 target 与 onChange）；既有 `TestShowFilterNoResults` 适配；核心零改动。
+  - 依赖：T5.3-1 · 预估：0.5d
+- [x] **T5.3-3 确认 Schema/Results 既有 `/` 仍工作**
+  - 产出：回归确认 Schema 检索表、Results 过滤行在三态重构后不退化（用户期望"schema 也能检索表"——本就支持，确保不破）。
+  - DoD：既有 `filter_test.go` / schema 过滤测试全绿；pty 抽查 Schema `/` 与 Results `/`。· 依赖：T5.3-2 · 预估：0.1d
+- [x] **T5.3-4 文档同步**
+  - 产出：`docs/MANUAL.md` §11/键位表写明「`/` 按聚焦面板检索：Connections→数据库 / Schema→表 / Results→结果行」；`docs/TUI.md` 强化节补一行。
+  - DoD：文档与实现一致。· 依赖：T5.3-1/2/3 · 预估：0.1d
+
+**Phase 5.3 验收**：`/` 在 Connections 检索数据库、Schema 检索表、Results 过滤行，且**随聚焦面板自动切换检索对象**；状态栏显示 `M/N` 计数；`Esc` 清空、`Enter` 保留；文档同步。核心零改动；CI 绿；逻辑白盒 + pty 冒烟。
+
 ---
 
 ## Phase 4 — TUI 交互重构（目标 v0.7）
