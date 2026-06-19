@@ -22,6 +22,9 @@ type Theme struct {
 	Field         tcell.Color // input field / modal background
 	FieldText     tcell.Color // input field / modal text
 	Contrast      tcell.Color // fallback contrast background (readable with light text)
+	Surface       tcell.Color // opaque modal/form panel background (dark card, stops bleed-through)
+	Background    tcell.Color // opaque app background for every panel (stops terminal bleed-through)
+	PrimaryText   tcell.Color // default body text, readable on the opaque dark background
 }
 
 // newTheme returns the active theme, honoring NO_COLOR.
@@ -29,7 +32,8 @@ func newTheme() Theme {
 	if noColor() {
 		c := tcell.ColorDefault
 		return Theme{Focus: c, Border: c, Title: c, Accent: c, Dim: c, Error: c,
-			Selection: c, SelectionText: c, Field: c, FieldText: c, Contrast: c}
+			Selection: c, SelectionText: c, Field: c, FieldText: c, Contrast: c, Surface: c,
+			Background: c, PrimaryText: c}
 	}
 	return Theme{
 		Focus:         tcell.ColorGreen,
@@ -38,11 +42,14 @@ func newTheme() Theme {
 		Accent:        tcell.ColorGreen,
 		Dim:           tcell.ColorGray,
 		Error:         tcell.ColorRed,
-		Selection:     tcell.NewRGBColor(0xc0, 0xc0, 0xc0), // light gray bar
-		SelectionText: tcell.ColorBlack,
-		Field:         tcell.NewRGBColor(0xcf, 0xcf, 0xcf), // light input/modal surface
-		FieldText:     tcell.ColorBlack,
+		Selection:     tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // selected-row bar: same dark gray as the input fields
+		SelectionText: tcell.ColorWhite,                   // light text on the dark selection bar
+		Field:         tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // input/modal surface: a touch lighter than the card
+		FieldText:     tcell.ColorWhite,                   // light text, readable on the dark field
 		Contrast:      tcell.NewRGBColor(0x30, 0x35, 0x40), // dim slate fallback
+		Surface:       tcell.NewRGBColor(0x1e, 0x1e, 0x1e), // dark opaque card for modals/forms
+		Background:    tcell.NewRGBColor(0x14, 0x16, 0x1a), // opaque app background (darker than the card)
+		PrimaryText:   tcell.NewRGBColor(0xd0, 0xd0, 0xd0), // light body text on the dark background
 	}
 }
 
@@ -87,14 +94,14 @@ func (t Theme) reset() string {
 	return "[-]"
 }
 
-// applyStyles points tview's global Styles at the terminal's own background and
-// foreground so the UI blends into the terminal like lazygit (tview otherwise
-// paints a solid black background). Contrast colors (input fields, buttons, the
-// delete modal) are left at tview's defaults so they stay visible on the
-// now-transparent background.
+// applyStyles points tview's global Styles at an opaque dark background and
+// light foreground so every panel is a solid surface — the terminal's own
+// transparency no longer bleeds the desktop/other apps through the UI. Under
+// NO_COLOR these collapse to the terminal default (Background/PrimaryText are
+// ColorDefault there), restoring the transparent, blend-in behavior.
 func (t Theme) applyStyles() {
-	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
-	tview.Styles.PrimaryTextColor = tcell.ColorDefault
+	tview.Styles.PrimitiveBackgroundColor = t.Background
+	tview.Styles.PrimaryTextColor = t.PrimaryText
 	tview.Styles.BorderColor = t.Border
 	tview.Styles.TitleColor = t.Title
 	tview.Styles.GraphicsColor = t.Border

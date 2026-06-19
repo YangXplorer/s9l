@@ -1,12 +1,15 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/rivo/tview"
@@ -29,17 +32,19 @@ func (a *App) showConnForm(edit *config.ConnectionConfig) {
 		portStr = strconv.Itoa(init.Port)
 	}
 
+	// Field width 0 = extend to the form's right edge, so the input bars fill the
+	// card with no dark gap to their right.
 	form := tview.NewForm()
-	form.AddInputField("ID", init.ID, 28, nil, nil).
-		AddInputField("Name", init.Name, 28, nil, nil).
+	form.AddInputField("ID", init.ID, 0, nil, nil).
+		AddInputField("Name", init.Name, 0, nil, nil).
 		AddDropDown("Driver", formDrivers, driverIndex(init.Driver), nil).
-		AddInputField("Host", init.Host, 28, nil, nil).
-		AddInputField("Port", portStr, 28, nil, nil).
-		AddInputField("User", init.User, 28, nil, nil).
-		AddInputField("Database", init.Database, 28, nil, nil).
+		AddInputField("Host", init.Host, 0, nil, nil).
+		AddInputField("Port", portStr, 0, nil, nil).
+		AddInputField("User", init.User, 0, nil, nil).
+		AddInputField("Database", init.Database, 0, nil, nil).
 		AddCheckbox("SSL", init.SSL, nil).
-		AddPasswordField("Password", "", 28, '*', nil).
-		AddInputField("Password ref", init.PasswordRef, 28, nil, nil)
+		AddPasswordField("Password", "", 0, '*', nil).
+		AddInputField("Password ref", init.PasswordRef, 0, nil, nil)
 
 	origID := ""
 	title := " New connection — Esc: cancel "
@@ -59,6 +64,7 @@ func (a *App) showConnForm(edit *config.ConnectionConfig) {
 			a.SetStatus("connection updated")
 		}
 	})
+	form.AddButton("Test", func() { a.testConnForm(form) })
 	form.AddButton("Cancel", func() { a.hideConnForm() })
 	form.SetFieldBackgroundColor(a.theme.Field).
 		SetFieldTextColor(a.theme.FieldText).
@@ -67,6 +73,9 @@ func (a *App) showConnForm(edit *config.ConnectionConfig) {
 		SetLabelColor(a.theme.Title)
 	form.SetBorder(true).SetTitle(title).SetTitleColor(a.theme.Title)
 	form.SetBorderColor(a.theme.Focus)
+	// Dark, opaque card: white labels/title pop, white input fields with black
+	// text give maximum contrast, and the content behind no longer bleeds through.
+	form.SetBackgroundColor(a.theme.Surface)
 
 	a.pages.AddPage("connform", centered(form, 52, 24), true, true)
 	a.app.SetFocus(form)
@@ -89,9 +98,10 @@ func (a *App) hideConnForm() {
 	a.app.SetFocus(a.navPanels()[a.focusIdx])
 }
 
-// submitConnForm reads the form into a ConnectionConfig and persists it: a new
-// connection when origID is empty, otherwise an update of origID.
-func (a *App) submitConnForm(form *tview.Form, origID string) error {
+// formConfig reads the form fields into a ConnectionConfig plus the typed
+// password (kept separate — it goes to the secret store, never the config). It
+// does not persist; Save and Test both build on it.
+func formConfig(form *tview.Form) (config.ConnectionConfig, string, error) {
 	field := func(label string) string {
 		if it, ok := form.GetFormItemByLabel(label).(*tview.InputField); ok {
 			return strings.TrimSpace(it.GetText())
@@ -105,7 +115,7 @@ func (a *App) submitConnForm(form *tview.Form, origID string) error {
 	if p := field("Port"); p != "" {
 		n, err := strconv.Atoi(p)
 		if err != nil {
-			return fmt.Errorf("port: must be a number")
+			return config.ConnectionConfig{}, "", fmt.Errorf("port: must be a number")
 		}
 		port = n
 	}
@@ -120,10 +130,55 @@ func (a *App) submitConnForm(form *tview.Form, origID string) error {
 		SSL:         ssl,
 		PasswordRef: field("Password ref"),
 	}
-	if origID == "" {
-		return a.saveConnection(cc, field("Password"))
+	// The Password field is an AddPasswordField, also an *tview.InputField.
+	return cc, field("Password"), nil
+}
+
+// submitConnForm reads the form into a ConnectionConfig and persists it: a new
+// connection when origID is empty, otherwise an update of origID.
+func (a *App) submitConnForm(form *tview.Form, origID string) error {
+	cc, password, err := formConfig(form)
+	if err != nil {
+		return err
 	}
-	return a.editConnection(origID, cc, field("Password"))
+	if origID == "" {
+		return a.saveConnection(cc, password)
+	}
+	return a.editConnection(origID, cc, password)
+}
+
+// testConnForm validates the form and opens a throwaway connection (using the
+// typed-but-unsaved password) to verify the settings before saving. The result
+// shows in the form title since the status bar is hidden behind the modal; the
+// dial runs in a goroutine with a timeout so the UI never blocks.
+func (a *App) testConnForm(form *tview.Form) {
+	cc, password, err := formConfig(form)
+	if err == nil {
+		err = validateConn(cc)
+	}
+	if err != nil {
+		form.SetTitle(" ✗ " + err.Error() + " ")
+		return
+	}
+	form.SetTitle(" Testing… ")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn, closer, derr := dial.OpenWithPassword(ctx, cc, a.store, password)
+		if closer != nil {
+			defer func() { _ = closer() }()
+		}
+		// A successful Open already round-trips to the server for every driver;
+		// no extra ping needed. conn is closed via closer above.
+		_ = conn
+		a.app.QueueUpdateDraw(func() {
+			if derr != nil {
+				form.SetTitle(" ✗ " + derr.Error() + " ")
+				return
+			}
+			form.SetTitle(" ✓ connection OK ")
+		})
+	}()
 }
 
 // validateConn checks the required fields shared by add and edit.

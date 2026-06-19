@@ -1,13 +1,76 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/secret"
 
+	"github.com/rivo/tview"
 	"github.com/zalando/go-keyring"
 )
+
+// buildForm constructs a connection form with the same field set as showConnForm,
+// so formConfig can be exercised without a running event loop.
+func buildForm() *tview.Form {
+	form := tview.NewForm()
+	form.AddInputField("ID", "", 28, nil, nil).
+		AddInputField("Name", "", 28, nil, nil).
+		AddDropDown("Driver", formDrivers, 0, nil).
+		AddInputField("Host", "", 28, nil, nil).
+		AddInputField("Port", "", 28, nil, nil).
+		AddInputField("User", "", 28, nil, nil).
+		AddInputField("Database", "", 28, nil, nil).
+		AddCheckbox("SSL", false, nil).
+		AddPasswordField("Password", "", 28, '*', nil).
+		AddInputField("Password ref", "", 28, nil, nil)
+	return form
+}
+
+func setField(form *tview.Form, label, val string) {
+	form.GetFormItemByLabel(label).(*tview.InputField).SetText(val)
+}
+
+func TestFormConfigReadsFields(t *testing.T) {
+	form := buildForm()
+	setField(form, "ID", " pg ") // trimmed
+	setField(form, "Host", "db.example")
+	setField(form, "Port", "5432")
+	setField(form, "Database", "app")
+	setField(form, "Password", "sekret")
+	form.GetFormItemByLabel("Driver").(*tview.DropDown).SetCurrentOption(1) // postgres
+
+	cc, password, err := formConfig(form)
+	if err != nil {
+		t.Fatalf("formConfig: %v", err)
+	}
+	if cc.ID != "pg" || cc.Driver != "postgres" || cc.Host != "db.example" || cc.Port != 5432 || cc.Database != "app" {
+		t.Errorf("formConfig cc = %+v", cc)
+	}
+	if password != "sekret" {
+		t.Errorf("password = %q, want sekret", password)
+	}
+}
+
+func TestFormConfigBadPort(t *testing.T) {
+	form := buildForm()
+	setField(form, "Port", "abc")
+	if _, _, err := formConfig(form); err == nil {
+		t.Error("non-numeric port should error")
+	}
+}
+
+// testConnForm's validation branch is synchronous: an invalid config sets a
+// "✗ …" title immediately (the async dial only runs once validation passes).
+func TestTestConnFormInvalidShowsError(t *testing.T) {
+	a := newFormApp(t)
+	form := buildForm() // empty ID → validateConn fails
+	a.testConnForm(form)
+	if got := form.GetTitle(); !strings.HasPrefix(got, " ✗") {
+		t.Errorf("title = %q, want a ✗ error title", got)
+	}
+}
 
 // newFormApp returns an App with an empty config and the memory secret store,
 // backed by a temp XDG dir so saveConnection's config.Save writes to a temp file.

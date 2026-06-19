@@ -55,15 +55,27 @@ func TestFocusPanelSetsBorderColors(t *testing.T) {
 	}
 }
 
-func TestApplyStylesUsesTerminalBackground(t *testing.T) {
-	// New must point tview's global background/foreground at the terminal
-	// default so the UI blends in like lazygit (not a solid black box).
+func TestApplyStylesOpaqueWithColor(t *testing.T) {
+	// With colors on, New must paint an opaque dark background (and light text)
+	// so the terminal's transparency can't bleed the desktop through the UI.
+	_ = New(Options{Config: sqliteCfg("demo", "x.db")})
+	if tview.Styles.PrimitiveBackgroundColor == tcell.ColorDefault {
+		t.Error("PrimitiveBackgroundColor should be an opaque color when colors are on")
+	}
+	if tview.Styles.PrimaryTextColor == tcell.ColorDefault {
+		t.Error("PrimaryTextColor should be an explicit light color when colors are on")
+	}
+}
+
+func TestApplyStylesTransparentUnderNoColor(t *testing.T) {
+	// NO_COLOR restores the transparent, blend-in behavior (terminal default).
+	t.Setenv("NO_COLOR", "1")
 	_ = New(Options{Config: sqliteCfg("demo", "x.db")})
 	if tview.Styles.PrimitiveBackgroundColor != tcell.ColorDefault {
-		t.Errorf("PrimitiveBackgroundColor = %v, want ColorDefault", tview.Styles.PrimitiveBackgroundColor)
+		t.Errorf("PrimitiveBackgroundColor = %v, want ColorDefault under NO_COLOR", tview.Styles.PrimitiveBackgroundColor)
 	}
 	if tview.Styles.PrimaryTextColor != tcell.ColorDefault {
-		t.Errorf("PrimaryTextColor = %v, want ColorDefault", tview.Styles.PrimaryTextColor)
+		t.Errorf("PrimaryTextColor = %v, want ColorDefault under NO_COLOR", tview.Styles.PrimaryTextColor)
 	}
 }
 
@@ -84,6 +96,18 @@ func TestSelectionStyleNoColorReverses(t *testing.T) {
 	_, _, attr := newTheme().selectionStyle().Decompose()
 	if attr&tcell.AttrReverse == 0 {
 		t.Error("NO_COLOR selection should use reverse video")
+	}
+}
+
+// Surface is an opaque dark card (so modals don't bleed through) when colors are
+// on, and collapses to the terminal default under NO_COLOR.
+func TestSurfaceOpaque(t *testing.T) {
+	if got := newTheme().Surface; got == tcell.ColorDefault {
+		t.Error("Surface should be an explicit opaque color when colors are on")
+	}
+	t.Setenv("NO_COLOR", "1")
+	if got := newTheme().Surface; got != tcell.ColorDefault {
+		t.Errorf("Surface under NO_COLOR = %v, want ColorDefault", got)
 	}
 }
 
