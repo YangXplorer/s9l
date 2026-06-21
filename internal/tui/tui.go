@@ -85,16 +85,23 @@ type App struct {
 	helpOpen     bool
 	historyOpen  bool
 	savedOpen    bool
-	filterOpen    bool
-	connFormOpen  bool
-	confirmOpen   bool
-	exportOpen    bool
-	cellValueOpen bool
+	filterOpen      bool
+	connFormOpen    bool
+	confirmOpen     bool
+	exportOpen      bool
+	cellValueOpen   bool
+	cellEditOpen    bool
+	confirmEditOpen bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
 	lastData [][]any
 	filter   string
+	viewRows [][]any // rows currently rendered (after filtering); maps table row → values
+
+	// Source of the current result, for in-place cell edit (UPDATE write-back).
+	resultTable    tableRef // single-table preview source (empty when not a preview)
+	resultEditable bool     // true only when the result is a single-table preview
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -277,6 +284,7 @@ const helpText = `[::b]s9l TUI[::-]
   /                 filter (Connections: databases · Schema: tables · Results: all-column fuzzy)
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
+  c                 Results: edit the selected cell (single-table preview only)
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
@@ -491,6 +499,10 @@ func (a *App) onSchemaSelect(node *tview.TreeNode) {
 // per dialect (and database-qualified when browsing another database).
 func (a *App) runTableQuery(ref tableRef) {
 	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), resultLimit))
+	// A single-table preview is editable; runQuery cleared these for the generic
+	// case, so mark editability after it returns (it only spawns a goroutine).
+	a.resultTable = ref
+	a.resultEditable = true
 }
 
 // qualifyTable builds the quoted, optionally database-qualified table name.
@@ -529,6 +541,10 @@ func (a *App) runQuery(sql string) {
 		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
 	}
+	// Default: an arbitrary query result is not cell-editable; runTableQuery
+	// re-marks single-table previews as editable after this returns.
+	a.resultEditable = false
+	a.resultTable = tableRef{}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := a.conn
@@ -784,6 +800,130 @@ func (a *App) hideCellValue() {
 	a.app.SetFocus(a.navPanels()[a.focusIdx])
 }
 
+// placeholderTUI returns the positional parameter placeholder for the driver
+// (pg $n, sqlserver @pN, others ?). Mirrors the import command's dialect rules.
+func placeholderTUI(driverName string, n int) string {
+	switch driverName {
+	case "postgres":
+		return fmt.Sprintf("$%d", n)
+	case "sqlserver":
+		return fmt.Sprintf("@p%d", n)
+	default:
+		return "?"
+	}
+}
+
+// buildUpdate builds a single-cell UPDATE: SET the edited column to newVal, with
+// a WHERE matching every original column value (IS NULL for NULL cells). Returns
+// the SQL and its positional args (newVal first, then the non-NULL where values).
+func buildUpdate(driverName, qualified string, cols []string, editCol int, newVal string, rowVals []any) (string, []any) {
+	args := []any{newVal}
+	n := 1
+	set := quoteIdent(driverName, cols[editCol]) + " = " + placeholderTUI(driverName, n)
+	where := make([]string, 0, len(cols))
+	for i, c := range cols {
+		if i >= len(rowVals) {
+			continue
+		}
+		if rowVals[i] == nil {
+			where = append(where, quoteIdent(driverName, c)+" IS NULL")
+			continue
+		}
+		n++
+		where = append(where, quoteIdent(driverName, c)+" = "+placeholderTUI(driverName, n))
+		args = append(args, rowVals[i])
+	}
+	sql := fmt.Sprintf("UPDATE %s SET %s WHERE %s", qualified, set, strings.Join(where, " AND "))
+	return sql, args
+}
+
+// showCellEdit opens an input to edit the selected Results cell (c). Only single-
+// table previews are editable; otherwise it reports why and does nothing.
+func (a *App) showCellEdit() {
+	if !a.resultEditable {
+		a.SetStatus("cell editing needs a single-table preview")
+		return
+	}
+	row, col := a.results.GetSelection()
+	if row <= 0 || col < 0 || row-1 >= len(a.viewRows) || col >= len(a.lastCols) {
+		return
+	}
+	rowVals := a.viewRows[row-1]
+	cur := ""
+	if col < len(rowVals) {
+		cur = cellString(rowVals[col])
+	}
+	in := tview.NewInputField().SetLabel(" = ").SetText(cur)
+	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
+	in.SetBorder(true).SetTitle(fmt.Sprintf(" Edit %s — Enter: next · Esc: cancel ", a.lastCols[col])).SetBorderColor(a.theme.Focus)
+	in.SetDoneFunc(func(key tcell.Key) {
+		if key != tcell.KeyEnter {
+			a.hideCellEdit()
+			return
+		}
+		newVal := in.GetText()
+		a.hideCellEdit()
+		sql, args := buildUpdate(a.driverName, qualifyTable(a.driverName, a.resultTable), a.lastCols, col, newVal, rowVals)
+		a.confirmCellUpdate(sql, args)
+	})
+	a.pages.AddPage("celledit", centered(in, 60, 3), true, true)
+	a.app.SetFocus(in)
+	a.cellEditOpen = true
+}
+
+func (a *App) hideCellEdit() {
+	a.pages.RemovePage("celledit")
+	a.cellEditOpen = false
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
+// confirmCellUpdate shows the generated UPDATE for confirmation before running
+// it (the operation mutates data and there is no transaction to undo it).
+func (a *App) confirmCellUpdate(sql string, args []any) {
+	modal := tview.NewModal().
+		SetText("Run this update?\n\n" + sql).
+		AddButtons([]string{"Cancel", "Update"}).
+		SetDoneFunc(func(_ int, label string) {
+			a.pages.RemovePage("confirmedit")
+			a.confirmEditOpen = false
+			a.app.SetFocus(a.navPanels()[a.focusIdx])
+			if label == "Update" {
+				a.execCellUpdate(sql, args)
+			}
+		})
+	modal.SetBackgroundColor(a.theme.Field).SetTextColor(a.theme.FieldText)
+	a.pages.AddPage("confirmedit", modal, true, true)
+	a.app.SetFocus(modal)
+	a.confirmEditOpen = true
+}
+
+// execCellUpdate runs the UPDATE off the UI goroutine, then refreshes the
+// preview. Errors land in the status bar; a single Exec is auto-committed.
+func (a *App) execCellUpdate(sql string, args []any) {
+	if a.conn == nil {
+		a.setError("not connected")
+		return
+	}
+	conn := a.conn
+	ref := a.resultTable
+	a.SetStatus("updating…")
+	go func() {
+		res, err := conn.Exec(context.Background(), sql, args...)
+		var n int64
+		if err == nil && res != nil {
+			n, _ = res.RowsAffected()
+		}
+		a.app.QueueUpdateDraw(func() {
+			if err != nil {
+				a.setError("update: " + err.Error())
+				return
+			}
+			a.SetStatus(fmt.Sprintf("updated %d row(s)", n))
+			a.runTableQuery(ref) // refresh from the DB
+		})
+	}()
+}
+
 // fuzzyMatch reports whether term is a case-insensitive subsequence of text:
 // every rune of term appears in text, in order (not necessarily contiguous).
 // An empty term always matches. This is looser than substring (e.g. "ae"
@@ -970,6 +1110,7 @@ func (a *App) hideFilter(clear bool) {
 
 // fillResults renders columns + rows into the Results table (header fixed).
 func (a *App) fillResults(cols []string, data [][]any) {
+	a.viewRows = data // retained so a selected table row maps back to its values
 	a.results.Clear()
 	for c, name := range cols {
 		a.results.SetCell(0, c, tview.NewTableCell(name).
@@ -1198,6 +1339,24 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the cell-edit input is open, the InputField's done func handles
+	// Enter/Esc; pass everything (incl. j/k) through as literal text.
+	if a.cellEditOpen {
+		return ev
+	}
+
+	// While the update-confirmation modal is open, Esc cancels; arrows/Enter go
+	// to the modal's buttons.
+	if a.confirmEditOpen {
+		if ev.Key() == tcell.KeyEscape {
+			a.pages.RemovePage("confirmedit")
+			a.confirmEditOpen = false
+			a.app.SetFocus(a.navPanels()[a.focusIdx])
+			return nil
+		}
+		return ev
+	}
+
 	// Vim-style navigation: h/j/k/l → Left/Down/Up/Right in any focused widget
 	// except the SQL editor (where they are text). Applies in panels (incl.
 	// Results cell movement) and in the list overlays.
@@ -1319,6 +1478,11 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case 'f':
 			if a.focusIdx == 2 { // Results: filter by the selected column
 				a.showColFilter()
+				return nil
+			}
+		case 'c':
+			if a.focusIdx == 2 { // Results: change (edit) the selected cell
+				a.showCellEdit()
 				return nil
 			}
 		}
