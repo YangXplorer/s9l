@@ -418,11 +418,11 @@
 
 ### 6.0 发布 v0.10 + 清理 open PR（先做）
 
-- [ ] **T6.0-1 处理 open PR #62（B-9 import）**
+- [x] **T6.0-1 处理 open PR #62（B-9 import）**
   - 现状：B-9 代码已在 develop 且标记完成；PR #62（`feature/b9-import`）疑似冗余。
   - 产出：核对 #62 内容是否已并入 develop——已并入→关闭 PR 并注明；未并入→评审后合并。
   - DoD：#62 有明确处置（关闭或合并）。· 预估：0.25d
-- [ ] **T6.0-2 推进 Release v0.10.0（PR #69）并打 tag**
+- [x] **T6.0-2 推进 Release v0.10.0（PR #69）并打 tag**
   - 现状：PR #69「Release v0.10.0」(develop→main) open；develop 已含 Phase 5.1–5.3 TUI 改进（`5bbd2af..718bd13`）。
   - 产出：确认 #69 含本轮改动（必要时 rebase/更新发布说明）→ 合并到 main → 打 tag `v0.10.0` 触发 `release.yml`（goreleaser 多平台二进制 + Homebrew cask）。
   - DoD：main 含本轮改动；`v0.10.0` release 产物生成；open PR 清空。· 预估：0.5d
@@ -430,24 +430,24 @@
 
 ### 6.1 Results 列过滤（按字段过滤）
 
-- [ ] **T6.1-1 `filterRowsByColumn` 纯函数 + 列过滤 UI**
+- [x] **T6.1-1 `filterRowsByColumn` 纯函数 + 列过滤 UI**
   - 目标：在 Results 按**某一列**过滤（区别于 `/` 全字段）。
   - 产出：① 纯函数 `filterRowsByColumn(cols, rows, colIdx, term)`（该列大小写不敏感子串/模糊）；② 选定列（复用 6.3 的 cell 左右选择确定列，或弹列选择）+ 输入框 + 实时重渲染；③ 状态栏 `col <name>: M/N`；键位如 `f`（`/` 保留全字段）。与全局过滤初版**互斥**。
   - DoD：纯函数测试（按列匹配/空 term/越界保护）；白盒（选列→过滤→计数→清空恢复）；核心零改动。· 预估：0.75d
 
 ### 6.2 Results `/` 全字段模糊检索
 
-- [ ] **T6.2-1 `/` 升级为全字段模糊（子序列）匹配**
+- [x] **T6.2-1 `/` 升级为全字段模糊（子序列）匹配**
   - 现状：`filterRows` 已是**跨所有列、大小写不敏感子串**匹配（即"全字段"）。
   - 产出：新增 `fuzzyMatch(text, term)`（子序列、大小写不敏感），`filterRows` 改用之（仍跨所有列）；空 term 全保留。评估子序列过松的风险，必要时保留子串模式可切换。
   - DoD：`fuzzyMatch` 测试（子序列命中/顺序敏感/大小写）；`filterRows` 跨列模糊测试；文档（`/` = 全字段模糊）同步。· 预估：0.5d
 
 ### 6.3 Results 单元格左右移动 + 选中编辑（写回 UPDATE）
 
-- [ ] **T6.3-1 单元格导航（左右移动选 cell）**
+- [x] **T6.3-1 单元格导航（左右移动选 cell）**
   - 产出：Results `SetSelectable(true, true)`；`←/→` 或 `h/l` 在列间移动选中 cell；状态栏显示 `行N · 列<name>`。只读、低风险。
   - DoD：白盒（cell 选择状态）；pty 抽查左右移动；核心零改动。· 预估：0.5d
-- [ ] **T6.3-2 查看完整单元格值**
+- [x] **T6.3-2 查看完整单元格值**
   - 产出：选中 cell 按键（如 `v`）弹浮层显示完整值（长文本/NULL/二进制友好）。只读。
   - DoD：白盒（取值格式化复用 `render.Cell`）；核心零改动。· 预估：0.25d
 - [ ] **T6.3-3 单元格就地编辑写回（UPDATE）** · ⚠️ 需小设计
