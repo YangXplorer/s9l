@@ -450,7 +450,7 @@
 - [x] **T6.3-2 查看完整单元格值**
   - 产出：选中 cell 按键（如 `v`）弹浮层显示完整值（长文本/NULL/二进制友好）。只读。
   - DoD：白盒（取值格式化复用 `render.Cell`）；核心零改动。· 预估：0.25d
-- [ ] **T6.3-3 单元格就地编辑写回（UPDATE）** · ⚠️ 需小设计
+- [x] **T6.3-3 单元格就地编辑写回（UPDATE）**
   - 目标：选中 cell → 编辑值 → 生成 `UPDATE <表> SET <列>=? WHERE <主键>=?` 并 Exec → 刷新。
   - 前置约束：**仅当结果来自单表预览**（已知表名，`runTableQuery` 路径）且该表有**主键/唯一键**（经 `driver.Metadata` 检测）时允许；否则只读并提示「不可编辑（非单表/无主键）」。
   - 产出：① 记录当前结果的来源表与列；② PK 检测（Metadata，新增能力或复用 Columns + 约束查询）；③ 编辑输入框预填原值（支持置 NULL）；④ `buildUpdate`（方言 placeholder/quoteIdentifier 复用 import）；⑤ 执行前确认弹窗（防误改），Exec 后刷新该行/重查。

@@ -215,3 +215,10 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 - **Results** → 过滤**结果行**（已支持，`applyFilter`/`filterRows`）。
 
 实现上 `showFilter`/`hideFilter` 由原布尔 `filterSchema` 改为三态 `filterTarget`（conn/schema/results），按 `focusIdx` 分派 title/initial/onChange。`Enter` 保留、`Esc` 清空。详见 [TASKS.md](./TASKS.md) Phase 5.3。
+
+## Results 面板增强（Phase 6）
+
+- **全字段模糊检索 `/`**：`filterRows` 用 `fuzzyMatch`（大小写不敏感**子序列**）跨所有列匹配。
+- **按列过滤 `f`**：`filterRowsByColumn` 仅匹配选中列；与 `/` 共用 `openFilterInput` 浮层，`filterTarget` 增 `filterTgtResultsCol`。
+- **单元格导航**：`SetSelectable(true,true)`，`←/→`·`h/l` 在 cell 间移动；`v` 浮层查看完整值。
+- **就地编辑写回 `c`（`UPDATE`）**：仅**单表预览**（`runTableQuery` 设 `resultEditable`/`resultTable`；`runQuery` 默认置否）可编辑。`buildUpdate` 生成 `UPDATE 表 SET 列=? WHERE <整行原值>`（NULL→`IS NULL`，方言 placeholder 经 `placeholderTUI`、标识符经 `quoteIdent`），确认弹窗显示 SQL → `conn.Exec` 异步执行 → 刷新预览、报告影响行数。**不做主键检测**（整行 WHERE，driver 零改动）；重复行一起更新（实害小）；设 NULL 暂未支持。核心 driver 接口零改动。
