@@ -37,6 +37,71 @@ func TestFilterRows(t *testing.T) {
 	}
 }
 
+func TestFuzzyMatch(t *testing.T) {
+	cases := []struct {
+		text, term string
+		want       bool
+	}{
+		{"alice", "", true},      // empty term always matches
+		{"alice", "ace", true},   // subsequence, non-contiguous
+		{"alice", "ALI", true},   // case-insensitive
+		{"alice", " z", false},   // missing rune
+		{"alice", "eci", false},  // wrong order (subsequence is ordered)
+		{"a@y.io", "y.io", true}, // contiguous still matches
+	}
+	for _, c := range cases {
+		if got := fuzzyMatch(c.text, c.term); got != c.want {
+			t.Errorf("fuzzyMatch(%q, %q) = %v, want %v", c.text, c.term, got, c.want)
+		}
+	}
+}
+
+func TestFilterRowsFuzzyAcrossColumns(t *testing.T) {
+	data := sampleRows()
+	// "ae" is a subsequence of "Alice" (a..l..i..c..e) but not "Bob"/"alicia".
+	if got := filterRows(data, "ae"); len(got) != 1 {
+		t.Errorf("fuzzy 'ae' matched %d rows, want 1 (Alice)", len(got))
+	}
+	// Non-first-column fuzzy match still works (email column).
+	if got := filterRows(data, "ayio"); len(got) != 1 {
+		t.Errorf("fuzzy 'ayio' matched %d rows, want 1 (a@y.io)", len(got))
+	}
+}
+
+func TestFilterRowsByColumn(t *testing.T) {
+	data := sampleRows() // cols: id, name, email
+	// Column 1 (name): "ali" matches Alice and alicia.
+	if got := filterRowsByColumn(data, 1, "ali"); len(got) != 2 {
+		t.Errorf("col 1 'ali' = %d rows, want 2", len(got))
+	}
+	// Column 2 (email): "ali" matches only alice@x.io (Bob is NULL, alicia is a@y.io).
+	if got := filterRowsByColumn(data, 2, "ali"); len(got) != 1 {
+		t.Errorf("col 2 'ali' = %d rows, want 1", len(got))
+	}
+	// Empty term returns all; out-of-range column matches none (guarded).
+	if got := filterRowsByColumn(data, 1, ""); len(got) != 3 {
+		t.Errorf("empty term = %d, want 3", len(got))
+	}
+	if got := filterRowsByColumn(data, 9, "x"); len(got) != 0 {
+		t.Errorf("out-of-range column = %d, want 0", len(got))
+	}
+}
+
+func TestApplyColFilterUpdatesTable(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	a.setResults([]string{"id", "name", "email"}, sampleRows())
+	a.filterCol = 2 // email column
+
+	a.applyColFilter("y.io")
+	if got := a.results.GetRowCount(); got != 2 { // header + 1 (a@y.io)
+		t.Errorf("after col filter rows = %d, want 2", got)
+	}
+	a.applyColFilter("")
+	if got := a.results.GetRowCount(); got != 4 {
+		t.Errorf("after clear rows = %d, want 4", got)
+	}
+}
+
 func TestApplyFilterUpdatesTable(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
 	a.setResults([]string{"id", "name", "email"}, sampleRows())

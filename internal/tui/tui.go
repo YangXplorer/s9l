@@ -79,15 +79,17 @@ type App struct {
 	connDBNode    *tview.TreeNode  // the connection node whose children are those databases
 
 	filterTarget filterTarget // which panel the open filter input targets
+	filterCol    int          // Results column index for the column filter (f)
 
 	focusIdx     int
 	helpOpen     bool
 	historyOpen  bool
 	savedOpen    bool
-	filterOpen   bool
-	connFormOpen bool
-	confirmOpen  bool
-	exportOpen   bool
+	filterOpen    bool
+	connFormOpen  bool
+	confirmOpen   bool
+	exportOpen    bool
+	cellValueOpen bool
 
 	// last result set, retained so the Results filter can re-render client-side.
 	lastCols []string
@@ -156,7 +158,10 @@ func (a *App) buildLayout() {
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
 	a.results = tview.NewTable().SetBorders(false).SetFixed(1, 0)
-	a.results.SetSelectable(true, false)
+	// Cell selection (rows + columns) so the cursor moves left/right between
+	// cells; the selected cell drives "view value" and (later) in-place edit.
+	a.results.SetSelectable(true, true)
+	a.results.SetSelectionChangedFunc(a.onResultsCellChanged)
 	a.titledPanel(a.results.Box, "[3] Results")
 
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
@@ -269,7 +274,10 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             drill in: connect+databases · pick database · preview table
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
-  /                 filter (Connections: databases · Schema: tables · Results: rows)
+  /                 filter (Connections: databases · Schema: tables · Results: all-column fuzzy)
+  f                 Results: filter by the selected column
+  v                 Results: view the selected cell's full value
+  h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
@@ -735,17 +743,78 @@ func (a *App) setResults(cols []string, data [][]any) {
 	a.fillResults(cols, data)
 }
 
-// filterRows keeps the rows where any cell contains term (case-insensitive). An
-// empty term returns data unchanged.
+// onResultsCellChanged shows the selected cell's position (row · column) in the
+// status bar as the cursor moves through the Results table.
+func (a *App) onResultsCellChanged(row, col int) {
+	if row <= 0 || col < 0 || col >= len(a.lastCols) {
+		return // header row or out of range
+	}
+	a.SetStatus(fmt.Sprintf("row %d · col [::b]%s[::-]", row, a.lastCols[col]))
+}
+
+// showCellValue pops up the full value of the selected Results cell (useful for
+// long text, NULL, or values wider than the column). Read-only.
+func (a *App) showCellValue() {
+	if len(a.lastCols) == 0 {
+		return
+	}
+	row, col := a.results.GetSelection()
+	if row <= 0 || col < 0 { // header or nothing selected
+		return
+	}
+	rows := filterRows(a.lastData, a.filter)
+	if row-1 >= len(rows) || col >= len(rows[row-1]) {
+		return
+	}
+	val := cellString(rows[row-1][col])
+	title := fmt.Sprintf(" %s ", a.lastCols[col])
+	view := tview.NewTextView().SetText(val).SetWrap(true).SetScrollable(true)
+	view.SetTextColor(a.theme.FieldText)
+	view.SetBackgroundColor(a.theme.Surface)
+	view.SetBorder(true).SetTitle(title).SetTitleColor(a.theme.Title).SetBorderColor(a.theme.Focus)
+	a.pages.AddPage("cellvalue", centered(view, 70, 12), true, true)
+	a.app.SetFocus(view)
+	a.cellValueOpen = true
+}
+
+// hideCellValue closes the cell-value overlay.
+func (a *App) hideCellValue() {
+	a.pages.RemovePage("cellvalue")
+	a.cellValueOpen = false
+	a.app.SetFocus(a.navPanels()[a.focusIdx])
+}
+
+// fuzzyMatch reports whether term is a case-insensitive subsequence of text:
+// every rune of term appears in text, in order (not necessarily contiguous).
+// An empty term always matches. This is looser than substring (e.g. "ae"
+// matches "alice"), giving / a forgiving full-field fuzzy search.
+func fuzzyMatch(text, term string) bool {
+	if term == "" {
+		return true
+	}
+	t := []rune(strings.ToLower(term))
+	i := 0
+	for _, r := range strings.ToLower(text) {
+		if r == t[i] {
+			i++
+			if i == len(t) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// filterRows keeps the rows where term fuzzy-matches any cell (case-insensitive
+// subsequence, across all columns). An empty term returns data unchanged.
 func filterRows(data [][]any, term string) [][]any {
 	if term == "" {
 		return data
 	}
-	lower := strings.ToLower(term)
 	out := make([][]any, 0, len(data))
 	for _, row := range data {
 		for _, cell := range row {
-			if strings.Contains(strings.ToLower(cellString(cell)), lower) {
+			if fuzzyMatch(cellString(cell), term) {
 				out = append(out, row)
 				break
 			}
@@ -776,7 +845,67 @@ const (
 	filterTgtResults filterTarget = iota
 	filterTgtSchema
 	filterTgtConn
+	filterTgtResultsCol
 )
+
+// filterRowsByColumn keeps rows whose cell in column colIdx fuzzy-matches term
+// (case-insensitive subsequence). An empty term returns data unchanged.
+func filterRowsByColumn(data [][]any, colIdx int, term string) [][]any {
+	if term == "" {
+		return data
+	}
+	out := make([][]any, 0, len(data))
+	for _, row := range data {
+		if colIdx >= 0 && colIdx < len(row) && fuzzyMatch(cellString(row[colIdx]), term) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// applyColFilter re-renders the Results table keeping rows whose selected
+// column matches term, reporting the match count for that column.
+func (a *App) applyColFilter(term string) {
+	a.filter = term
+	rows := filterRowsByColumn(a.lastData, a.filterCol, term)
+	a.fillResults(a.lastCols, rows)
+	name := ""
+	if a.filterCol >= 0 && a.filterCol < len(a.lastCols) {
+		name = a.lastCols[a.filterCol]
+	}
+	if term == "" {
+		a.SetStatus(fmt.Sprintf("%d rows", len(a.lastData)))
+	} else {
+		a.SetStatus(fmt.Sprintf("col %s: %d/%d", name, len(rows), len(a.lastData)))
+	}
+}
+
+// showColFilter opens a filter input scoped to the currently selected Results
+// column (f), as opposed to / which matches across all columns.
+func (a *App) showColFilter() {
+	if len(a.lastData) == 0 {
+		a.SetStatus("no results to filter")
+		return
+	}
+	_, col := a.results.GetSelection()
+	if col < 0 || col >= len(a.lastCols) {
+		return
+	}
+	a.filterCol = col
+	a.filterTarget = filterTgtResultsCol
+	a.openFilterInput(fmt.Sprintf(" Filter col %s — Enter: keep · Esc: clear ", a.lastCols[col]), a.filter, a.applyColFilter)
+}
+
+// openFilterInput shows the shared single-line filter overlay.
+func (a *App) openFilterInput(title, initial string, onChange func(string)) {
+	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
+	in.SetChangedFunc(onChange)
+	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
+	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
+	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
+	a.app.SetFocus(in)
+	a.filterOpen = true
+}
 
 // showFilter opens the / filter input for the focused panel. Typing filters
 // live; Enter keeps the filter, Esc clears it. The target follows the panel:
@@ -816,13 +945,7 @@ func (a *App) showFilter() {
 		initial = a.filter
 		onChange = a.applyFilter
 	}
-	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
-	in.SetChangedFunc(onChange)
-	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
-	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
-	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
-	a.app.SetFocus(in)
-	a.filterOpen = true
+	a.openFilterInput(title, initial, onChange)
 }
 
 // hideFilter closes the filter overlay. When clear is true the active filter is
@@ -836,6 +959,8 @@ func (a *App) hideFilter(clear bool) {
 			a.applyConnFilter("")
 		case filterTgtSchema:
 			a.applySchemaFilter("")
+		case filterTgtResultsCol:
+			a.applyColFilter("")
 		default:
 			a.applyFilter("")
 		}
@@ -1063,14 +1188,29 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
-	// Vim-style navigation: j/k → Down/Up in any focused widget except the SQL
-	// editor (where they are text). Applies in panels and in the list overlays.
+	// While the cell-value overlay is open, Esc / v / q close it; other keys
+	// (arrows, j/k) scroll the text view.
+	if a.cellValueOpen {
+		if ev.Key() == tcell.KeyEscape || ev.Rune() == 'v' || ev.Rune() == 'q' {
+			a.hideCellValue()
+			return nil
+		}
+		return ev
+	}
+
+	// Vim-style navigation: h/j/k/l → Left/Down/Up/Right in any focused widget
+	// except the SQL editor (where they are text). Applies in panels (incl.
+	// Results cell movement) and in the list overlays.
 	if ev.Key() == tcell.KeyRune && a.app.GetFocus() != a.editor {
 		switch ev.Rune() {
 		case 'j':
 			return tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
 		case 'k':
 			return tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)
+		case 'h':
+			return tcell.NewEventKey(tcell.KeyLeft, 0, tcell.ModNone)
+		case 'l':
+			return tcell.NewEventKey(tcell.KeyRight, 0, tcell.ModNone)
 		}
 	}
 
@@ -1169,6 +1309,16 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case 'd':
 			if a.focusIdx == 0 {
 				a.confirmDeleteSelectedConn()
+				return nil
+			}
+		case 'v':
+			if a.focusIdx == 2 { // Results: view the selected cell's full value
+				a.showCellValue()
+				return nil
+			}
+		case 'f':
+			if a.focusIdx == 2 { // Results: filter by the selected column
+				a.showColFilter()
 				return nil
 			}
 		}
