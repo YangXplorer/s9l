@@ -412,6 +412,55 @@
 
 ---
 
+## Phase 6 — 发布 v0.10 + Results 面板增强（目标 v0.11）
+
+按用户最新反馈：先把当前改动发版、清掉未处理 PR；随后增强 Results 面板——列过滤、`/` 全字段模糊检索、单元格左右移动与就地编辑（写回）。TUI 增强延续原则：**只改 `internal/tui/`（写回 UPDATE 复用 `driver.Conn.Exec` + import 的方言辅助），核心 driver 接口零改动**；纯函数 + 白盒 + pty 冒烟。
+
+### 6.0 发布 v0.10 + 清理 open PR（先做）
+
+- [ ] **T6.0-1 处理 open PR #62（B-9 import）**
+  - 现状：B-9 代码已在 develop 且标记完成；PR #62（`feature/b9-import`）疑似冗余。
+  - 产出：核对 #62 内容是否已并入 develop——已并入→关闭 PR 并注明；未并入→评审后合并。
+  - DoD：#62 有明确处置（关闭或合并）。· 预估：0.25d
+- [ ] **T6.0-2 推进 Release v0.10.0（PR #69）并打 tag**
+  - 现状：PR #69「Release v0.10.0」(develop→main) open；develop 已含 Phase 5.1–5.3 TUI 改进（`5bbd2af..718bd13`）。
+  - 产出：确认 #69 含本轮改动（必要时 rebase/更新发布说明）→ 合并到 main → 打 tag `v0.10.0` 触发 `release.yml`（goreleaser 多平台二进制 + Homebrew cask）。
+  - DoD：main 含本轮改动；`v0.10.0` release 产物生成；open PR 清空。· 预估：0.5d
+  - 注：合并到 main / 打 tag 为对外动作，执行前与用户确认版本号与范围。
+
+### 6.1 Results 列过滤（按字段过滤）
+
+- [ ] **T6.1-1 `filterRowsByColumn` 纯函数 + 列过滤 UI**
+  - 目标：在 Results 按**某一列**过滤（区别于 `/` 全字段）。
+  - 产出：① 纯函数 `filterRowsByColumn(cols, rows, colIdx, term)`（该列大小写不敏感子串/模糊）；② 选定列（复用 6.3 的 cell 左右选择确定列，或弹列选择）+ 输入框 + 实时重渲染；③ 状态栏 `col <name>: M/N`；键位如 `f`（`/` 保留全字段）。与全局过滤初版**互斥**。
+  - DoD：纯函数测试（按列匹配/空 term/越界保护）；白盒（选列→过滤→计数→清空恢复）；核心零改动。· 预估：0.75d
+
+### 6.2 Results `/` 全字段模糊检索
+
+- [ ] **T6.2-1 `/` 升级为全字段模糊（子序列）匹配**
+  - 现状：`filterRows` 已是**跨所有列、大小写不敏感子串**匹配（即"全字段"）。
+  - 产出：新增 `fuzzyMatch(text, term)`（子序列、大小写不敏感），`filterRows` 改用之（仍跨所有列）；空 term 全保留。评估子序列过松的风险，必要时保留子串模式可切换。
+  - DoD：`fuzzyMatch` 测试（子序列命中/顺序敏感/大小写）；`filterRows` 跨列模糊测试；文档（`/` = 全字段模糊）同步。· 预估：0.5d
+
+### 6.3 Results 单元格左右移动 + 选中编辑（写回 UPDATE）
+
+- [ ] **T6.3-1 单元格导航（左右移动选 cell）**
+  - 产出：Results `SetSelectable(true, true)`；`←/→` 或 `h/l` 在列间移动选中 cell；状态栏显示 `行N · 列<name>`。只读、低风险。
+  - DoD：白盒（cell 选择状态）；pty 抽查左右移动；核心零改动。· 预估：0.5d
+- [ ] **T6.3-2 查看完整单元格值**
+  - 产出：选中 cell 按键（如 `v`）弹浮层显示完整值（长文本/NULL/二进制友好）。只读。
+  - DoD：白盒（取值格式化复用 `render.Cell`）；核心零改动。· 预估：0.25d
+- [ ] **T6.3-3 单元格就地编辑写回（UPDATE）** · ⚠️ 需小设计
+  - 目标：选中 cell → 编辑值 → 生成 `UPDATE <表> SET <列>=? WHERE <主键>=?` 并 Exec → 刷新。
+  - 前置约束：**仅当结果来自单表预览**（已知表名，`runTableQuery` 路径）且该表有**主键/唯一键**（经 `driver.Metadata` 检测）时允许；否则只读并提示「不可编辑（非单表/无主键）」。
+  - 产出：① 记录当前结果的来源表与列；② PK 检测（Metadata，新增能力或复用 Columns + 约束查询）；③ 编辑输入框预填原值（支持置 NULL）；④ `buildUpdate`（方言 placeholder/quoteIdentifier 复用 import）；⑤ 执行前确认弹窗（防误改），Exec 后刷新该行/重查。
+  - 风险：**数据变更**、无事务 API（单条 Exec 自动提交，失败仅提示已/未改）、PK 检测各库差异、类型/编码、并发改动。**开工前出小设计评审**。
+  - DoD：纯函数 `buildUpdate`（各方言 SET/WHERE/placeholder）测试；白盒（fake conn：编辑→生成正确 UPDATE→Exec 调用参数）；E2E SQLite（预览表→改一格→count/值校验）；无主键/非单表时禁用并提示；docs 同步。· 预估：2–3d
+
+**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
+
+---
+
 ## Phase 4 — TUI 交互重构（目标 v0.7）
 
 预估合计：~2–2.5 人周。延续原则：**只改 `internal/tui/`，复用 driver/config/secret/history，核心零改动**；逻辑与渲染解耦，白盒 + SimulationScreen 冒烟 + 手动清单。
@@ -450,21 +499,10 @@
   - 产出：`internal/config/connection.go` 增 `SSLMode/TLSCA/TLSCert/TLSKey`（`ssl_mode/tls_ca/tls_cert/tls_key`）；`sslMode(whenOn)` 解析（SSLMode 优先，否则 SSL→whenOn/disable）；`validateTLS` 对不支持驱动清晰报错。postgres DSN 加 `sslmode/sslrootcert/sslcert/sslkey`；mysql `mysqlTLS` 映射 `tls`（内置模式，自定义证书报错改用裸 DSN）；sqlserver `encrypt`+`trustservercertificate`（require=加密不校验）+`certificate`(CA)。`conn add` 加 `--ssl-mode/--tls-ca/--tls-cert/--tls-key`。**`ssl: true` 行为不变**（pg=require、mysql=tls=true、sqlserver=encrypt 并校验）。
   - DoD：白盒 `TestDSNTLS`（pg sslmode+CA+客户端证书精确 DSN；mysql 各模式→tls/disable 省略；mysql 证书报错；sqlserver ssl:true=encrypt 校验、ssl_mode=require=trust+CA；sqlserver 客户端证书报错）+ 既有 `TestDSN` 向后兼容仍 PASS ✅；docs(MANUAL §4、README) 同步。核心层零改动（仅 config + cmd flag）。
   - 注：TLS 需真实证书/服务器做端到端，本环境无法 live；以 DSN 字符串断言固定安全相关映射（同既有 DSN 测试方式），供评审。mysql 自定义证书/客户端证书留裸 DSN。
-- [ ] **B-3 AWS RDS IAM Auth（临时 token 连接）** · ⚠️ · 预估 2d
-  - 目标：用 IAM 生成 ~15 分钟临时 token 作为 RDS/Aurora(pg/mysql) 的密码。
-  - 需要修改：
-    - 认证模式：`password_ref` 增方案 `aws-rds-iam`（或连接字段 `auth: rds-iam` + `region`）。
-    - 新增 `internal/awsauth/`：用 AWS SDK Go v2 `feature/rds/auth.BuildAuthToken(ctx, endpoint, region, user, creds)` 在**连接时**生成 token（时效短，不长缓存）。
-    - 连接编排：auth=rds-iam 时即时取 token 当密码，并强制 TLS（RDS IAM 必须）。
-  - 关键考量/风险：**引入 AWS SDK 依赖较重**（纯 Go，不破坏 CGO 约束）；凭据链 env/instance-profile/SSO；token 仅握手时需要（长连接不受 TTL 影响）；真实连接需 AWS 环境→**手动验证**，单测只验 token 装配（fake creds）。
 - [x] **B-4 ClickHouse 驱动（含一致性套件方言化）** · 预估 1.5d
   - 产出：① `internal/driver/drivertest/conformance.go` 方言化——`Option`(`WithTypes`/`WithTableSuffix`/`SkipRowsAffected`)，默认值与原 SQL **完全一致**（SQLite/PG/MySQL/SQL Server 不变）；② `internal/driver/clickhouse/`（`ClickHouse/clickhouse-go/v2` stdlib，纯 Go；`[]byte`→string；Metadata `system.databases`/`system.tables`(currentDatabase)/`system.columns`，`?` 占位）；③ config `clickhouseDSN`(`clickhouse://user:pass@host:9000/db`，ssl→`secure`/require→`skip_verify`；证书文件报错)+ DSN 分支 + `cmd/s9l/main.go` 注册。**核心 driver 接口零改动**。
   - DoD：ClickHouse IT 用方言选项(`Int32`/`String`/`Nullable(String)`、`ENGINE=Memory`、SkipRowsAffected)跑 `RunConformance`+Metadata（testcontainers `clickhouse/clickhouse-server:24.3-alpine`，CI 验证）；既有 SQLite conformance 默认值不变仍 PASS ✅；config `TestDSN`(clickhouse + secure) ✅；`-short`/lint/build 全绿 ✅；docs 同步。
   - 注：ClickHouse 需 `ENGINE` 子句 + `Nullable(...)` + INSERT 不报 RowsAffected——故先把一致性套件做成方言无关，也让将来非标准 SQL 引擎更易接入。
-- [ ] **B-5 MongoDB（评估非关系型对接口的冲击）** · 🔴 · 预估：设计 spike 0.5d，落地大
-  - 目标：评估能否纳入文档型数据库。
-  - 需要修改/冲击：当前 `Driver.Query(sql)`→`Rows(columns/values)` 假设**表格化 SQL**；Mongo 用 find/aggregate + 文档结果，**不契合现有接口**。需新增能力接口（如 `DocumentStore`）或文档→表格投影层 + REPL/TUI 的另一查询模式。
-  - 决策点：先 spike 评估接口冲击与价值；很可能**暂不纳入**（s9l 定位 SQL 客户端），或仅做只读文档浏览。**开工前必须设计评审**。
 - [x] **B-6 TUI 连接编辑/删除** · ✅ · 预估 1d
   - 产出：`internal/tui/connform.go`——`showConnForm(edit *ConnectionConfig)` 复用为「新增/编辑」(编辑预填字段、密码留空=保留原 ref、改 id 唯一性校验)；`e` 编辑选中、`d` 删除选中(`tview.Modal` 确认)；`editConnection`(remove+add 替换，失败回滚原值；新密码写 keychain)/`deleteConnection`(`cfg.Remove`+`Save`+`secret.Delete` best-effort)/`selectedConn`(列表索引↔cfg.Connections)；onKey 增 confirmOpen 分支 + `e`/`d`(仅 Connections 面板)；help 增 `n/e/d`。复用 config/secret，核心零改动。
   - DoD：白盒 `TestEditConnection`(改名+持久化+缺失/重名报错+回滚)、`TestEditConnectionUpdatesPassword`(keychain 更新)、`TestDeleteConnection`(移除+config.Load 校验+keychain 删除+重复删报错)、`TestSelectedConn`(索引映射) ✅；真实 pty `e`→Edit 表单、`d`→Delete 确认模态、help 列 n/e/d ✅。
@@ -483,12 +521,6 @@
 - [x] **B-10 历史统计 `s9l history stats`** · ✅ · 预估 0.75d
   - 产出：`internal/history/stats.go`——`Store.Stats(ctx, topN)` 聚合 query_history（总数/成功/失败/平均耗时；按连接计数；Top-N 高频查询含次数+平均耗时）；`cmd/s9l/history.go` `runHistory` 分派 `stats`→`runHistoryStats`（`--top`，渲染总览/按连接/高频查询）。只读本地 `history.db`，核心零改动。
   - DoD：白盒 `TestStats`（总数/成功率/avg 取整/按连接排序/Top 查询 avg）、`TestStatsEmpty` ✅；CLI 实测输出正确 ✅；docs(README/MANUAL §3·§9) 同步 ✅。
-- [ ] **B-11 历史/收藏云同步** · 🔴 · 预估：设计 needed，大
-  - 目标：把 `history.db`/收藏同步到远端（git 仓库 / S3 / 同步端点）。
-  - 决策点：需选后端 + 认证 + **隐私设计**（历史含 SQL，可能含敏感信息）。建议**暂缓**，优先做 B-10 本地统计；如要做，先出设计与隐私评审。
-- [ ] **B-12 运行期插件机制（plugin / wasm）** · 🔴 · 预估：spike 2–3d，落地大
-  - 目标：运行时加载 driver（Go plugin 或 wasm），而非编译期注册。
-  - 决策点：当前**编译期 `Driver` 注册已满足"新增库只加一个 driver 文件"**目标；运行期插件带来 ABI 稳定性、安全沙箱（建议 `wazero` wasm 而非 Go plugin）等大复杂度与安全面。**仅当编译期抽象不够用时再评估**，先 spike。
 
 ---
 
