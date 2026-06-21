@@ -190,3 +190,28 @@ Phase T 已交付可用的全屏 TUI；本阶段在其上做 **lazygit 风格的
 - 纯函数：`filterTables(names, term)`、Connections 树构建（连接→库）、Schema 表列表过滤。
 - fake conn（Metadata + databaseBrowser）驱动 Connections 展开库 / 选库刷新 Schema / 表检索的白盒。
 - 手动清单：真实终端核对背景与 lazygit 一致、库展开、表检索手感。
+
+---
+
+## 二轮视觉微调（Phase 5.1，按用户实测反馈）
+
+T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心零改动。详见 [TASKS.md](./TASKS.md) Phase 5.1。
+
+1. **选中行 / 输入框背景更浅**——`theme.Selection`、`theme.Field` 进一步调浅，配黑色文字保证浅底深字高对比（兼顾真彩降采样终端），解决「选中行看不清内容」。
+2. **去「橙色树形」**——数据库子节点去 `Accent` 着色（不再显橙/绿）；Schema `SetTopLevel(1)` 隐藏库根节点、表列表扁平无缩进；展开/折叠三角 `▾`/`▸` 仅在「上层」连接节点，库/表叶子无三角。
+3. **Connections 上下移动**——方向键 + vim `j/k` 选择，当前行经更浅选中样式清晰高亮。
+
+## 三轮微调 + 连接测试（Phase 5.2）
+
+1. **选中行 / 输入框再调浅**——`Selection`/`Field` 进一步近白（0xf0f0f0 / 0xf4f4f4），配黑字高对比。
+2. **New connection 表单「Test」按钮**——保存前一键试连：复用 `dial.OpenWithPassword`（用表单内未入库的明文密码试连，空则回退 `secret.Resolve`），带 5s 超时、goroutine 异步、`QueueUpdateDraw` 回推；结果显示在表单标题（`testing…` / `✓ connection OK` / `✗ <error>`），不阻塞 UI。详见 [TASKS.md](./TASKS.md) Phase 5.2。
+
+## 上下文相关 `/` 检索（Phase 5.3）
+
+`/` 的检索对象**随聚焦面板自动切换**，规则一致「检索当前面板的内容」：
+
+- **Connections** → 检索当前连接下的**数据库**（新增；`applyConnFilter` 重建库子节点，状态栏 `databases M/N`）。
+- **Schema** → 检索**表**（已支持，`applySchemaFilter`/`filterTables`）。
+- **Results** → 过滤**结果行**（已支持，`applyFilter`/`filterRows`）。
+
+实现上 `showFilter`/`hideFilter` 由原布尔 `filterSchema` 改为三态 `filterTarget`（conn/schema/results），按 `focusIdx` 分派 title/initial/onChange。`Enter` 保留、`Esc` 清空。详见 [TASKS.md](./TASKS.md) Phase 5.3。

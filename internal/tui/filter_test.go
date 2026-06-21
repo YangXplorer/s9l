@@ -3,7 +3,10 @@ package tui
 import (
 	"testing"
 
+	"github.com/YangXplorer/s9l/internal/config"
 	"github.com/YangXplorer/s9l/internal/secret"
+
+	"github.com/rivo/tview"
 )
 
 func sampleRows() [][]any {
@@ -64,4 +67,65 @@ func TestShowFilterNoResults(t *testing.T) {
 	if a.filterOpen {
 		t.Error("filter overlay should not open with no results")
 	}
+}
+
+// applyConnFilter keeps the databases matching the term as the connection's
+// child nodes (each retaining its dbNodeRef), and clearing restores them all.
+func TestApplyConnFilter(t *testing.T) {
+	a := newBrowserApp()
+	node := tview.NewTreeNode("my")
+	a.loadConnDatabases(node, config.ConnectionConfig{ID: "my", Driver: "mysql"})
+
+	if got := len(a.connDatabases); got != 2 {
+		t.Fatalf("connDatabases = %d, want 2 (app, logs)", got)
+	}
+	if got := len(node.GetChildren()); got != 2 {
+		t.Fatalf("db child nodes = %d, want 2", got)
+	}
+
+	a.applyConnFilter("log")
+	kids := node.GetChildren()
+	if len(kids) != 1 || kids[0].GetText() != "logs" {
+		t.Fatalf("after filter log = %v, want [logs]", nodeTexts(kids))
+	}
+	if ref, ok := kids[0].GetReference().(dbNodeRef); !ok || ref.db != "logs" || ref.connID != "my" {
+		t.Errorf("filtered db node ref = %+v, want dbNodeRef{my, logs}", kids[0].GetReference())
+	}
+
+	a.applyConnFilter("")
+	if got := len(node.GetChildren()); got != 2 {
+		t.Errorf("after clear = %d, want 2", got)
+	}
+}
+
+// showFilter targets the focused panel: Connections → databases, Schema →
+// tables, Results → rows.
+func TestShowFilterTargetByPanel(t *testing.T) {
+	a := newBrowserApp()
+	node := tview.NewTreeNode("my")
+	a.loadConnDatabases(node, config.ConnectionConfig{ID: "my", Driver: "mysql"})
+
+	a.focusIdx = 0 // Connections
+	a.showFilter()
+	if !a.filterOpen || a.filterTarget != filterTgtConn {
+		t.Fatalf("Connections: open=%v target=%d, want open + filterTgtConn", a.filterOpen, a.filterTarget)
+	}
+	a.hideFilter(true)
+
+	a.currentDB = "app"
+	a.loadSchema() // app → users, orders
+	a.focusIdx = 1 // Schema
+	a.showFilter()
+	if !a.filterOpen || a.filterTarget != filterTgtSchema {
+		t.Fatalf("Schema: target=%d, want filterTgtSchema", a.filterTarget)
+	}
+	a.hideFilter(true)
+
+	a.setResults([]string{"id", "name", "email"}, sampleRows())
+	a.focusIdx = 2 // Results
+	a.showFilter()
+	if !a.filterOpen || a.filterTarget != filterTgtResults {
+		t.Fatalf("Results: target=%d, want filterTgtResults", a.filterTarget)
+	}
+	a.hideFilter(true)
 }

@@ -129,6 +129,18 @@ s9l conn rm pg
 > `ssl: true` 行为不变（postgres=require、mysql=tls、sqlserver=encrypt 并验证证书）。
 > mysql 的自定义 CA/客户端证书需用裸 DSN（`RegisterTLSConfig`），config 仅支持其内置模式。
 
+**SSH 隧道**（数据库在堡垒机后时，连接前先建隧道）：
+
+| 参数 | 说明 |
+|------|------|
+| `--ssh-host` | SSH 堡垒机主机（设置即启用隧道） |
+| `--ssh-port` `--ssh-user` | 堡垒机端口（默认 22）/ 用户 |
+| `--ssh-key` | SSH 私钥文件（不设则用 SSH agent `$SSH_AUTH_SOCK`） |
+| `--ssh-known-hosts` | known_hosts 文件（默认 `~/.ssh/known_hosts`） |
+| `--ssh-insecure-host-key` | 跳过主机密钥校验（**不安全**，仅测试用） |
+
+> 默认**校验堡垒机主机密钥**（`known_hosts`）；首次连接需先用 `ssh` 把主机加入 known_hosts，或显式 `--ssh-insecure-host-key`。加密私钥口令用 `ssh_key_pass_ref`（同 `password_ref` 形式）配置。
+
 ### 4.2 配置文件
 
 连接保存在 `$XDG_CONFIG_HOME/s9l/config.yaml`（回退 `~/.config/s9l/config.yaml`），权限 `0600`。可手动编辑：
@@ -431,7 +443,7 @@ s9l tui pg       # 直接连上命名连接 pg
 ```
 
 四个面板：
-- **Connections（左上）**：`config.yaml` 里的连接树（无树形连线；可展开的连接前显示开合三角 `▾`/`▸`；`↑`/`↓` 或 `j`/`k` 上下选择）。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
+- **Connections（左上）**：`config.yaml` 里的连接树（无树形连线；可展开的连接前显示开合三角 `▾`/`▸`；`↑`/`↓` 或 `j`/`k` 上下选择）。每行 `图标 + 名称`（图标按驱动 `[pg]/[my]/[sq]/[ms]`，`S9L_TUI_ICONS=nerd` 用 Nerd Font 字形、`=off` 关闭）。`Enter` 连接；对**多库引擎（MySQL）会展开其数据库列表**，再 `Enter` 选中某数据库 → 刷新 Schema 为该库的表（解决“连接没指定默认库时看不到表”）。展开数据库后按 `/` **检索数据库名**（子串、大小写不敏感，状态栏显示 `databases M/N`）。单库引擎（SQLite/PostgreSQL/SQL Server）直接列当前库的表。
 - **Schema（左下）**：当前所选数据库的**表列表**。`Enter` 预览选中表（自动按方言取前 200 行）。按 `/` **检索表名**（子串、大小写不敏感，状态栏显示 `tables M/N`）。
 - **Results（右上）**：查询/预览结果表格。按 `/` **过滤结果行**（跨列子串）。
 - **SQL (F5 run)（右下）**：SQL 编辑器，`F5` 执行。
@@ -446,7 +458,7 @@ s9l tui pg       # 直接连上命名连接 pg
 | `↑`/`↓` 或 `j`/`k` | 在当前面板内上下移动（编辑器内 `j`/`k` 是普通文本） |
 | `Enter` | Connections=连接并展开数据库 / 选中数据库刷新 Schema；Schema=预览选中表 |
 | `n` / `e` / `d` | 在 Connections 面板：新增 / 编辑 / 删除连接（密码存系统 keychain） |
-| `/` | 检索：Schema 聚焦时过滤**表名**，否则过滤**结果行**（`Enter` 保留、`Esc` 清空） |
+| `/` | 检索（**随聚焦面板切换对象**）：Connections=**数据库名** / Schema=**表名** / Results=**结果行**（`Enter` 保留、`Esc` 清空） |
 | `F5` | 执行 SQL 编辑器里的语句 |
 | `Esc` | 取消正在执行的查询 / 关闭浮层 / 清空过滤 |
 | `Ctrl-R` | 打开查询历史；`Enter` 把选中项**载入编辑器** |
@@ -457,8 +469,12 @@ s9l tui pg       # 直接连上命名连接 pg
 | `q` / `Ctrl-C` | 退出 TUI |
 
 ### 11.3 在界面里管理连接
+> `n` / `e` / `d` **仅在 Connections 面板（`1`）聚焦时生效**，其他面板不响应。
+
 - `n` 打开「新增连接」表单（id/name/driver 下拉/host/port/user/database/ssl/password 或 password-ref）；填好 **Save** 即写入 `config.yaml`，填了密码则存入系统 keychain（配置只留引用）。
+- 表单含 **Test** 按钮：**保存前一键验证连接**。用表单当前填写（含未入库的明文密码；留空则回退 `password_ref` 解析），带超时异步试连，结果显示在表单标题——`Testing…` → `✓ connection OK` / `✗ <错误>`，不阻塞界面。
 - `e` 编辑选中连接（预填；密码留空=保留原引用）；`d` 删除（确认弹窗，连同 keychain 密码）。
+- 表单/模态为**不透明暗色卡片**（输入框为略浅暗灰 + 白字），不会透出后方内容。
 
 ### 11.4 典型操作流
 1. `s9l tui neohub-dev` 进界面（自动连接）。

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
-	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/repl"
 	"github.com/YangXplorer/s9l/internal/schemacache"
@@ -22,15 +21,11 @@ const replPrompt = "s9l> "
 // runREPL opens the connection once and runs the interactive loop, reusing the
 // connection for every statement and recording each in history.
 func runREPL(ctx context.Context, in io.Reader, out, errOut io.Writer, target, driverFlag string, opts render.Options, timeout time.Duration, usePager bool) error {
-	drv, dsn, err := resolveTarget(target, driverFlag)
+	conn, _, closeConn, err := openTarget(ctx, target, driverFlag)
 	if err != nil {
 		return err
 	}
-	conn, err := driver.Open(ctx, drv, dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = closeConn() }()
 
 	// Persistent schema cache (best-effort): speeds up completion across
 	// sessions and keeps it usable if a live metadata lookup fails. Only named

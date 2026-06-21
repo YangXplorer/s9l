@@ -32,6 +32,50 @@ type ConnectionConfig struct {
 	TLSCA   string `yaml:"tls_ca,omitempty"`
 	TLSCert string `yaml:"tls_cert,omitempty"`
 	TLSKey  string `yaml:"tls_key,omitempty"`
+
+	// SSH tunnel: when SSHHost is set, the connection is made through an SSH
+	// bastion. Host-key verification uses SSHKnownHosts (default
+	// ~/.ssh/known_hosts) unless SSHInsecureHostKey is set.
+	SSHHost            string `yaml:"ssh_host,omitempty"`
+	SSHPort            int    `yaml:"ssh_port,omitempty"`
+	SSHUser            string `yaml:"ssh_user,omitempty"`
+	SSHKey             string `yaml:"ssh_key,omitempty"`               // private key file (else ssh-agent)
+	SSHKeyPassRef      string `yaml:"ssh_key_pass_ref,omitempty"`      // passphrase ref for an encrypted key
+	SSHKnownHosts      string `yaml:"ssh_known_hosts,omitempty"`       // known_hosts file
+	SSHInsecureHostKey bool   `yaml:"ssh_insecure_host_key,omitempty"` // skip host-key check (INSECURE)
+}
+
+// HasSSH reports whether the connection should be tunneled through SSH.
+func (c ConnectionConfig) HasSSH() bool { return c.SSHHost != "" }
+
+// dialPort returns the database port to dial: the configured port, or the
+// driver's default.
+func (c ConnectionConfig) dialPort() int {
+	if c.Port > 0 {
+		return c.Port
+	}
+	switch c.Driver {
+	case "postgres":
+		return 5432
+	case "mysql":
+		return 3306
+	case "sqlserver":
+		return 1433
+	case "clickhouse":
+		return 9000
+	default:
+		return 0
+	}
+}
+
+// DialHostPort returns the database host and effective port to connect to
+// (before any SSH tunnel rewrites them).
+func (c ConnectionConfig) DialHostPort() (string, int) {
+	host := c.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return host, c.dialPort()
 }
 
 // DSN builds the driver-specific data source name. Phase 1 supports SQLite,

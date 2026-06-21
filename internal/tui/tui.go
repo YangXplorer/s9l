@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
+	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/secret"
@@ -70,7 +71,14 @@ type App struct {
 	// Schema panel table list, retained so the table filter can re-render.
 	schemaTables []string
 	schemaFilter string
-	filterSchema bool // the open filter input targets Schema (vs Results)
+
+	// Connections panel database list, retained so / can filter databases.
+	connDatabases []string         // databases under the connected (multi-db) connection
+	connFilter    string           // active database filter term
+	connDBOwner   string           // connID owning connDatabases (for dbNodeRef)
+	connDBNode    *tview.TreeNode  // the connection node whose children are those databases
+
+	filterTarget filterTarget // which panel the open filter input targets
 
 	focusIdx     int
 	helpOpen     bool
@@ -92,6 +100,7 @@ type App struct {
 	onResult func() // test hook fired after a query completes (UI goroutine)
 
 	conn       driver.Conn
+	connClose  func() error // closes conn + any SSH tunnel
 	connID     string
 	driverName string
 
@@ -140,7 +149,9 @@ func (a *App) buildLayout() {
 	a.connTree.SetSelectedFunc(a.onConnSelect)
 	a.titledPanel(a.connTree.Box, "[1] Connections")
 
-	a.schema = tview.NewTreeView().SetGraphics(false)
+	// SetTopLevel(1) hides the (database-name) root so tables render flat — no
+	// tree indentation or colored root, just the current database's table list.
+	a.schema = tview.NewTreeView().SetTopLevel(1).SetGraphics(false)
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
@@ -161,9 +172,11 @@ func (a *App) buildLayout() {
 	a.keybar = tview.NewTextView().SetDynamicColors(true)
 	a.keybar.SetText(" " + a.keyBar())
 
+	// Connections is shorter than Schema (2:3): connections are usually few,
+	// while the table list benefits from the extra room.
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.connTree, 0, 1, true).
-		AddItem(a.schema, 0, 1, false)
+		AddItem(a.connTree, 0, 2, true).
+		AddItem(a.schema, 0, 3, false)
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.results, 0, 1, false).
 		AddItem(a.editor, editorHeight, 0, false)
@@ -253,10 +266,10 @@ const helpText = `[::b]s9l TUI[::-]
 
   Tab / Shift-Tab   switch panel
   1 / 2 / 3 / 4      Connections / Schema / Results / SQL
-  Enter             connect + list databases · pick database · preview table
-  n / e / d         new / edit / delete connection
+  Enter             drill in: connect+databases · pick database · preview table
+  n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
-  /                 filter (Schema: tables · Results: rows)
+  /                 filter (Connections: databases · Schema: tables · Results: rows)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
   Ctrl-S            save editor SQL as a favorite
@@ -280,6 +293,10 @@ type dbNodeRef struct {
 // connection is a top-level node (icon + display name); Enter connects it and,
 // for multi-database engines, expands it to its databases.
 func (a *App) populateConnections() {
+	// Rebuilding the tree invalidates any retained database node/list.
+	a.connDBNode = nil
+	a.connDatabases = nil
+	a.connFilter = ""
 	root := tview.NewTreeNode("")
 	a.connTree.SetRoot(root)
 	for _, cc := range a.cfg.Connections {
@@ -322,6 +339,14 @@ func (a *App) onConnSelect(node *tview.TreeNode) {
 			}
 			a.loadConnDatabases(node, ref.cc)
 			node.SetExpanded(true)
+			// Drill into the sub-part: multi-db engines now have database
+			// children → move the cursor onto the first one to pick; single-db
+			// engines loaded Schema directly → focus the Schema panel.
+			if kids := node.GetChildren(); len(kids) > 0 {
+				a.connTree.SetCurrentNode(kids[0])
+			} else {
+				a.focusPanel(1)
+			}
 		} else {
 			node.SetExpanded(!node.IsExpanded())
 		}
@@ -330,6 +355,7 @@ func (a *App) onConnSelect(node *tview.TreeNode) {
 		a.currentDB = ref.db
 		a.loadSchema()
 		a.SetStatus(fmt.Sprintf("database: [::b]%s[::-]", ref.db))
+		a.focusPanel(1) // drill into the sub-part: the database's tables (Schema)
 	default:
 		node.SetExpanded(!node.IsExpanded())
 	}
@@ -342,6 +368,11 @@ func (a *App) onConnSelect(node *tview.TreeNode) {
 func (a *App) loadConnDatabases(node *tview.TreeNode, cc config.ConnectionConfig) {
 	a.currentDB = ""
 	node.ClearChildren()
+	// Reset retained database state; single-database engines leave it empty so
+	// the Connections / filter reports "no databases to filter".
+	a.connDatabases = nil
+	a.connDBNode = nil
+	a.connFilter = ""
 
 	md, isMeta := a.conn.(driver.Metadata)
 	if _, multi := a.conn.(databaseBrowser); !multi || !isMeta {
@@ -353,12 +384,40 @@ func (a *App) loadConnDatabases(node *tview.TreeNode, cc config.ConnectionConfig
 		a.setError("list databases: " + err.Error())
 		return
 	}
-	for _, db := range dbs {
-		node.AddChild(a.treeNode(db).
-			SetReference(dbNodeRef{connID: cc.ID, db: db}).
-			SetColor(a.theme.Accent))
-	}
+	a.connDatabases = dbs
+	a.connDBOwner = cc.ID
+	a.connDBNode = node
+	a.renderConnDatabases()
 	a.schemaPlaceholder("select a database")
+}
+
+// renderConnDatabases (re)builds the database child nodes of the current
+// connection's node, applying the active connection filter. Each child is a
+// plain (uncolored) list item; the expand toggle stays on the parent.
+func (a *App) renderConnDatabases() {
+	if a.connDBNode == nil {
+		return
+	}
+	a.connDBNode.ClearChildren()
+	for _, db := range filterTables(a.connDatabases, a.connFilter) {
+		a.connDBNode.AddChild(a.treeNode(db).
+			SetReference(dbNodeRef{connID: a.connDBOwner, db: db}))
+	}
+}
+
+// applyConnFilter re-renders the Connections database list keeping databases
+// matching term and reports the match count.
+func (a *App) applyConnFilter(term string) {
+	a.connFilter = term
+	a.renderConnDatabases()
+	if a.connDBNode != nil {
+		a.connDBNode.SetExpanded(true) // keep the filtered list visible
+	}
+	if term == "" {
+		a.SetStatus(fmt.Sprintf("%d databases", len(a.connDatabases)))
+	} else {
+		a.SetStatus(fmt.Sprintf("databases %d/%d", len(filterTables(a.connDatabases, term)), len(a.connDatabases)))
+	}
 }
 
 // findConnNode returns the Connections-tree node for the connection id, or nil.
@@ -377,26 +436,15 @@ func (a *App) findConnNode(id string) *tview.TreeNode {
 // connect resolves the connection's password, opens it, and updates status.
 // Errors are surfaced in the status bar; the UI never crashes on a bad connect.
 func (a *App) connect(cc config.ConnectionConfig) error {
-	password, err := secret.Resolve(a.store, cc.PasswordRef)
-	if err != nil {
-		a.setError(fmt.Sprintf("connection %q: %v", cc.ID, err))
-		return err
-	}
-	dsn, err := cc.DSN(password)
-	if err != nil {
-		a.setError(err.Error())
-		return err
-	}
-	conn, err := driver.Open(context.Background(), cc.Driver, dsn)
+	conn, closer, err := dial.Open(context.Background(), cc, a.store)
 	if err != nil {
 		a.setError(err.Error())
 		return err
 	}
 
-	if a.conn != nil {
-		_ = a.conn.Close()
-	}
+	a.closeConn() // close any previous connection + tunnel
 	a.conn = conn
+	a.connClose = closer
 	a.connID = cc.ID
 	a.driverName = cc.Driver
 	a.currentDB = ""
@@ -425,6 +473,7 @@ type tableRef struct{ db, name string }
 func (a *App) onSchemaSelect(node *tview.TreeNode) {
 	if ref, ok := node.GetReference().(tableRef); ok {
 		a.runTableQuery(ref)
+		a.focusPanel(2) // drill into the sub-part: the table's rows (Results)
 		return
 	}
 	node.SetExpanded(!node.IsExpanded())
@@ -718,17 +767,38 @@ func (a *App) applyFilter(term string) {
 	}
 }
 
-// showFilter opens the Results filter input (/). Typing filters live; Enter
-// keeps the filter, Esc clears it.
+// filterTarget identifies which panel an open / filter input acts on. The
+// focused panel decides: Connections filters databases, Schema filters tables,
+// everything else filters the Results rows.
+type filterTarget int
+
+const (
+	filterTgtResults filterTarget = iota
+	filterTgtSchema
+	filterTgtConn
+)
+
+// showFilter opens the / filter input for the focused panel. Typing filters
+// live; Enter keeps the filter, Esc clears it. The target follows the panel:
+// Connections → databases, Schema → tables, Results → rows.
 func (a *App) showFilter() {
-	// Target the focused panel: the Schema table list, otherwise the Results.
-	a.filterSchema = a.focusIdx == 1
 	var (
 		title    string
 		initial  string
 		onChange func(string)
 	)
-	if a.filterSchema {
+	switch a.focusIdx {
+	case 0: // Connections → databases of the connected (multi-db) connection
+		a.filterTarget = filterTgtConn
+		if a.connDBNode == nil || len(a.connDatabases) == 0 {
+			a.SetStatus("no databases to filter")
+			return
+		}
+		title = " Filter databases — Enter: keep · Esc: clear "
+		initial = a.connFilter
+		onChange = a.applyConnFilter
+	case 1: // Schema → tables
+		a.filterTarget = filterTgtSchema
 		if len(a.schemaTables) == 0 {
 			a.SetStatus("no tables to filter")
 			return
@@ -736,7 +806,8 @@ func (a *App) showFilter() {
 		title = " Filter tables — Enter: keep · Esc: clear "
 		initial = a.schemaFilter
 		onChange = a.applySchemaFilter
-	} else {
+	default: // Results → rows
+		a.filterTarget = filterTgtResults
 		if len(a.lastData) == 0 {
 			a.SetStatus("no results to filter")
 			return
@@ -760,9 +831,12 @@ func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
 	if clear {
-		if a.filterSchema {
+		switch a.filterTarget {
+		case filterTgtConn:
+			a.applyConnFilter("")
+		case filterTgtSchema:
 			a.applySchemaFilter("")
-		} else {
+		default:
 			a.applyFilter("")
 		}
 	}
@@ -860,9 +934,15 @@ func (a *App) renderSchema() {
 		label = a.currentDB
 	}
 	root := tview.NewTreeNode(label).SetColor(a.theme.Accent)
-	a.schema.SetRoot(root).SetCurrentNode(root)
+	a.schema.SetRoot(root)
 	for _, name := range filterTables(a.schemaTables, a.schemaFilter) {
 		root.AddChild(a.treeNode(name).SetReference(tableRef{db: a.currentDB, name: name}))
+	}
+	// Root is hidden (SetTopLevel(1)); highlight the first visible table instead.
+	if kids := root.GetChildren(); len(kids) > 0 {
+		a.schema.SetCurrentNode(kids[0])
+	} else {
+		a.schema.SetCurrentNode(root)
 	}
 }
 
@@ -900,8 +980,10 @@ func (a *App) schemaPlaceholder(msg string) {
 	a.schemaTables = nil
 	a.schemaFilter = ""
 	root := tview.NewTreeNode(a.connID).SetColor(a.theme.Accent)
-	root.AddChild(tview.NewTreeNode("(" + msg + ")"))
-	a.schema.SetRoot(root).SetCurrentNode(root)
+	hint := tview.NewTreeNode("(" + msg + ")")
+	root.AddChild(hint)
+	// Root is hidden (SetTopLevel(1)); the hint child is the only visible line.
+	a.schema.SetRoot(root).SetCurrentNode(hint)
 }
 
 // namesFrom collects the first column of rows (a name listing), folding the
@@ -1073,8 +1155,12 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			a.showFilter()
 			return nil
 		case 'n':
-			a.showConnForm(nil)
-			return nil
+			// new/edit/delete connection only act when the Connections panel is
+			// focused; elsewhere the key falls through (e.g. as filter text).
+			if a.focusIdx == 0 {
+				a.showConnForm(nil)
+				return nil
+			}
 		case 'e':
 			if a.focusIdx == 0 {
 				a.editSelectedConn()
@@ -1123,10 +1209,11 @@ func (a *App) Run() error {
 func (a *App) Stop() { a.app.Stop() }
 
 func (a *App) closeConn() {
-	if a.conn != nil {
-		_ = a.conn.Close()
-		a.conn = nil
+	if a.connClose != nil {
+		_ = a.connClose()
+		a.connClose = nil
 	}
+	a.conn = nil
 }
 
 // --- testing seams ---
@@ -1138,7 +1225,15 @@ func (a *App) SetScreen(s tcell.Screen) { a.app.SetScreen(s) }
 // drive the app deterministically without sleeps.
 func (a *App) OnReady(fn func()) {
 	a.app.SetAfterDrawFunc(func(tcell.Screen) {
-		a.ready.Do(fn)
+		a.ready.Do(func() {
+			// Run fn via the event queue rather than inside the afterDraw
+			// callback: that callback holds the Application lock, and fn may call
+			// SetFocus (which re-locks) — e.g. the Enter drill-down focuses the
+			// sub-panel. Queuing makes fn run in the same safe context as real
+			// input handlers. A goroutine is needed because QueueUpdateDraw blocks
+			// until the (currently drawing) loop drains it.
+			go a.app.QueueUpdateDraw(fn)
+		})
 	})
 }
 

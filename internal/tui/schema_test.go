@@ -138,6 +138,11 @@ func TestLoadConnDatabases(t *testing.T) {
 	if !ok || ref.db != "app" || ref.connID != "my" {
 		t.Fatalf("first db node ref = %+v, want dbNodeRef{my, app}", kids[0].GetReference())
 	}
+	// Database nodes carry no Accent color (no "colored tree" look); the expand
+	// toggle lives on the parent connection node instead.
+	if got := kids[0].GetColor(); got == a.theme.Accent {
+		t.Errorf("db node color = %v, want non-Accent (plain) so it doesn't read as a colored tree", got)
+	}
 	if a.currentDB != "" {
 		t.Errorf("currentDB = %q after listing databases, want empty until one is picked", a.currentDB)
 	}
