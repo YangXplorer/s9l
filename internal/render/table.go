@@ -54,12 +54,7 @@ func tableWith(w io.Writer, cols []string, rows [][]any, maxCellWidth int) error
 	return nil
 }
 
-func format(v any) string {
-	if v == nil {
-		return nullText
-	}
-	return fmt.Sprintf("%v", v)
-}
+func format(v any) string { return Cell(v) }
 
 func writeRow(w io.Writer, cells []string, widths []int) error {
 	parts := make([]string, len(cells))
