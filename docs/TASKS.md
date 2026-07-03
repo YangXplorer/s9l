@@ -468,7 +468,21 @@
   - 产出：① 新增 `render.Cell(v)` 单值人读格式化（nil→NULL；`[]byte` 或含非法 UTF-8/控制字符的 `string` → `0x…` 十六进制；其余 `%v`）；② REPL 表格 `format` 与 TUI `cellString` 复用之；机器格式（csv/tsv/json）不变，保数据保真。**driver 层零改动**（归一化行为保持，修在显示层）。
   - DoD：`render.Cell` 单测（文本/CJK/多行保持、二进制→hex、非法 UTF-8→hex、NULL）；表格渲染含二进制列不乱码；TUI 白盒；核心 driver 零改动。· 预估：0.5d
 
-**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
+### 6.5 Results WHERE 过滤 + 分页 + 网格线（用户反馈）
+
+- [x] **T6.5-1 单表预览 WHERE 过滤（服务端）**
+  - 现状：`/` 是客户端全字段模糊，只在已取回的 200 行内筛。用户希望 filter 以"添加 WHERE 条件"的形式作用于整表。
+  - 产出：① 单表预览（`resultTable` 有效）时 `/` 改为 WHERE 表达式输入（Enter 应用、Esc 清除；**不逐键实时查询**，避免半截 SQL 打库）；② `previewQuery` 扩展为 `(driver, qualified, where, limit, offset)`（sqlserver 首页 TOP、翻页 `ORDER BY (SELECT NULL) OFFSET…FETCH`；其余 `LIMIT n [OFFSET m]`）；③ Results 标题显示当前表/WHERE/页码（`setResultsTitle`）；④ 非法表达式→查询报错入状态栏、原结果保留；⑤ 非预览结果（任意 SQL）`/` 保持客户端模糊，`f` 列过滤不变。
+  - DoD：`previewQuery` 纯函数测试（各方言 × where × offset）；白盒（WHERE 应用→重查 SQL 含 WHERE 且 page 归零；Esc 清除恢复；任意 SQL 清空预览态）；SQLite E2E（WHERE 过滤行数正确）；核心零改动。· 预估：1d
+- [x] **T6.5-2 Results 分页**
+  - 现状：预览固定 `LIMIT 200`，超出部分不可见。
+  - 产出：① 预览态含 `resultPage`，`]` 下一页 / `[` 上一页（Results 焦点、预览时）；② 满页（=resultLimit）才允许下一页，末页/首页给提示；③ 与 WHERE 共用 `refreshPreview` 经路（编辑写回后的刷新也走它，保留 WHERE/页码）；④ 标题显示 `page N`；⑤ help 同步。
+  - DoD：白盒（翻页 SQL 带 OFFSET、页码状态、末页/首页/查询中防抖边界）；SQLite E2E（>200 行表翻页内容正确、不重叠）；核心零改动。· 预估：0.75d
+- [x] **T6.5-3 Results 行列网格线**
+  - 产出：Results 表 `SetBorders(true)`——行与行、列与列之间有网格线（用户反馈：行列希望有线相隔）。与 T6.4-1 行高亮/选中 cell 样式兼容。
+  - DoD：现有行高亮白盒仍绿；pty/目视确认网格线与选中样式共存；核心零改动。· 预估：0.25d
+
+**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤）、分页浏览、网格线分隔、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
 ---
 
