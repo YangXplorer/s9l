@@ -144,7 +144,7 @@ func TestSurfaceOpaque(t *testing.T) {
 func TestKeyBarListsShortcuts(t *testing.T) {
 	a := New(Options{Config: sqliteCfg("demo", "x.db")})
 	bar := a.keyBar()
-	for _, want := range []string{"Tab", "F5", "filter", "history", "saved", "help", "quit"} {
+	for _, want := range []string{"Tab", "F5", "filter", "page", "history", "saved", "help", "quit"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("keybar missing %q: %s", want, bar)
 		}

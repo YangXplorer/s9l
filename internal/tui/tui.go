@@ -217,6 +217,11 @@ func (a *App) buildLayout() {
 		AddItem(a.status, 1, 0, false).
 		AddItem(a.keybar, 1, 0, false)
 
+	a.connTree.SetFocusFunc(func() { a.syncFocus(0) })
+	a.schema.SetFocusFunc(func() { a.syncFocus(1) })
+	a.results.SetFocusFunc(func() { a.syncFocus(2) })
+	a.editor.SetFocusFunc(func() { a.syncFocus(3) })
+
 	a.pages = tview.NewPages().AddPage("main", root, true, true)
 	a.app.SetRoot(a.pages, true).EnableMouse(true)
 	a.focusPanel(0)
@@ -238,10 +243,30 @@ func (a *App) navPanels() []tview.Primitive {
 	return []tview.Primitive{a.connTree, a.schema, a.results, a.editor}
 }
 
-// focusPanel moves focus to panel i and highlights its border.
+// focusPanel moves focus to panel i; the panel's focus func (syncFocus) updates
+// focusIdx and the borders, so mouse clicks and Tab/number keys stay in sync.
 func (a *App) focusPanel(i int) {
-	a.focusIdx = i
 	a.app.SetFocus(a.navPanels()[i])
+}
+
+// overlayOpen reports whether any modal/overlay is on screen. Every closer
+// clears its flag only after RemovePage, so this also covers the transient
+// refocus tview performs while an overlay is being torn down.
+func (a *App) overlayOpen() bool {
+	return a.helpOpen || a.historyOpen || a.savedOpen || a.filterOpen ||
+		a.connFormOpen || a.confirmOpen || a.exportOpen ||
+		a.cellValueOpen || a.cellEditOpen || a.confirmEditOpen
+}
+
+// syncFocus records the focused panel and repaints the border colors. It runs
+// via each panel's SetFocusFunc — including when a mouse click moves the focus,
+// which would otherwise leave focusIdx (and the panel keys: v/f/c/Enter/]/[,
+// n/e/d) pointing at the wrong panel.
+func (a *App) syncFocus(i int) {
+	if a.overlayOpen() {
+		return // tview's transient refocus while an overlay opens/closes
+	}
+	a.focusIdx = i
 	a.connTree.SetBorderColor(a.theme.border(i == 0))
 	a.schema.SetBorderColor(a.theme.border(i == 1))
 	a.results.SetBorderColor(a.theme.border(i == 2))
@@ -254,7 +279,7 @@ func (a *App) keyBar() string {
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
 		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
-		{"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
+		{"[ ]", "page"}, {"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
 	for i, e := range keys {
@@ -302,7 +327,7 @@ const helpText = `[::b]s9l TUI[::-]
                     WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
-  c                 Results: edit the selected cell (single-table preview only)
+  c / Enter         Results: edit the selected cell (single-table preview only)
   ] / [             Results: next / previous preview page
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
@@ -1628,6 +1653,13 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	// can type freely (letters, digits, '?', 'q' are text, not shortcuts).
 	if a.app.GetFocus() == a.editor {
 		return ev
+	}
+
+	// Enter on a Results cell edits it (spreadsheet-style alias for c); other
+	// panels keep their own Enter behavior (connect / preview table).
+	if ev.Key() == tcell.KeyEnter && a.focusIdx == 2 {
+		a.showCellEdit()
+		return nil
 	}
 
 	if ev.Key() == tcell.KeyRune {
