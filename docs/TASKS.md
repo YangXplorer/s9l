@@ -457,7 +457,18 @@
   - 风险：**数据变更**、无事务 API（单条 Exec 自动提交，失败仅提示已/未改）、PK 检测各库差异、类型/编码、并发改动。**开工前出小设计评审**。
   - DoD：纯函数 `buildUpdate`（各方言 SET/WHERE/placeholder）测试；白盒（fake conn：编辑→生成正确 UPDATE→Exec 调用参数）；E2E SQLite（预览表→改一格→count/值校验）；无主键/非单表时禁用并提示；docs 同步。· 预估：2–3d
 
-**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
+### 6.4 Results 选中行整行高亮 + 当前 cell 强调
+
+- [x] **T6.4-1 选中行整行高亮，当前 cell 更强凸显**
+  - 目标：光标所在**行整体**着高亮条（lazygit 式行条），**当前 cell** 在行内用更强样式（accent 反色）凸显——行/列位置一眼可辨（用户反馈）。
+  - 产出：① Theme 新增 `cellCursorStyle()`（accent 背景 + 黑字 + 加粗；NO_COLOR 下 reverse+bold），Results 表级 `SetSelectedStyle` 改用之；② 选中变化时给当前行所有 cell 套 `selectionStyle()` 行条、旧行恢复默认样式（`highlightResultsRow`，tview 表级选中样式只画当前 cell，整行需手动着色）；③ `fillResults` 重渲染（过滤/编辑刷新）后重挂行高亮（Clear 会丢 cell 样式，且 tview 的选中位置钳制不触发回调，需显式 `Select`）。
+  - DoD：白盒（选中行各 cell 背景=Selection、移动后旧行恢复默认、重渲染后行高亮保持）；NO_COLOR 降级可见（行 reverse、cell reverse+bold）；核心零改动。· 预估：0.5d
+- [x] **T6.4-2 二进制值乱码修复（binary/BLOB → 十六进制显示）**
+  - 现状：各 driver 的 rowsAdapter 将 `[]byte` 一律归一化为 `string`，MySQL `binary(16)` UUID 等二进制列在 Results/REPL 表格显示为乱码（用户截图反馈）。
+  - 产出：① 新增 `render.Cell(v)` 单值人读格式化（nil→NULL；`[]byte` 或含非法 UTF-8/控制字符的 `string` → `0x…` 十六进制；其余 `%v`）；② REPL 表格 `format` 与 TUI `cellString` 复用之；机器格式（csv/tsv/json）不变，保数据保真。**driver 层零改动**（归一化行为保持，修在显示层）。
+  - DoD：`render.Cell` 单测（文本/CJK/多行保持、二进制→hex、非法 UTF-8→hex、NULL）；表格渲染含二进制列不乱码；TUI 白盒；核心 driver 零改动。· 预估：0.5d
+
+**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
 ---
 

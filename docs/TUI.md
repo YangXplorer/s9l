@@ -221,4 +221,6 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 - **全字段模糊检索 `/`**：`filterRows` 用 `fuzzyMatch`（大小写不敏感**子序列**）跨所有列匹配。
 - **按列过滤 `f`**：`filterRowsByColumn` 仅匹配选中列；与 `/` 共用 `openFilterInput` 浮层，`filterTarget` 增 `filterTgtResultsCol`。
 - **单元格导航**：`SetSelectable(true,true)`，`←/→`·`h/l` 在 cell 间移动；`v` 浮层查看完整值。
+- **二进制值显示（乱码修复）**：driver 层把 `[]byte` 归一化为 `string`，二进制列（如 MySQL `binary(16)` UUID）原样打印会成乱码——`render.Cell` 对 `[]byte` 及含非法 UTF-8/控制字符的字符串改显 `0x…` 十六进制；TUI `cellString` 与 REPL 表格共用，csv/tsv/json 机器格式保持原始数据。
+- **选中行高亮 + 当前 cell 强调**：光标行**整行**套 `selectionStyle()` 行条（tview 表级选中样式只画当前 cell，整行由 `highlightResultsRow` 在选中变化时手动着色、旧行恢复默认）；**当前 cell** 由表级 `SetSelectedStyle(cellCursorStyle())`（accent 背景+黑字+粗体；NO_COLOR 下 reverse+bold）叠加凸显。`fillResults` 重渲染后显式 `Select` 重挂行高亮（Clear 丢样式且 tview 的选中钳制不触发回调）。
 - **就地编辑写回 `c`（`UPDATE`）**：仅**单表预览**（`runTableQuery` 设 `resultEditable`/`resultTable`；`runQuery` 默认置否）可编辑。`buildUpdate` 生成 `UPDATE 表 SET 列=? WHERE <整行原值>`（NULL→`IS NULL`，方言 placeholder 经 `placeholderTUI`、标识符经 `quoteIdent`），确认弹窗显示 SQL → `conn.Exec` 异步执行 → 刷新预览、报告影响行数。**不做主键检测**（整行 WHERE，driver 零改动）；重复行一起更新（实害小）；设 NULL 暂未支持。核心 driver 接口零改动。
