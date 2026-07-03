@@ -13,15 +13,32 @@ import (
 )
 
 func TestPreviewQuery(t *testing.T) {
-	if got := previewQuery("mysql", "`t`", 200); got != "SELECT * FROM `t` LIMIT 200" {
-		t.Errorf("mysql preview = %q", got)
+	cases := []struct {
+		name, driver, where string
+		limit, offset       int
+		want                string
+	}{
+		{"mysql first page", "mysql", "", 200, 0, "SELECT * FROM `t` LIMIT 200"},
+		{"sqlite first page", "sqlite", "", 50, 0, `SELECT * FROM "t" LIMIT 50`},
+		{"offset paging", "postgres", "", 200, 400, `SELECT * FROM "t" LIMIT 200 OFFSET 400`},
+		{"where", "mysql", "age > 20 AND name LIKE 'a%'", 200, 0,
+			"SELECT * FROM `t` WHERE age > 20 AND name LIKE 'a%' LIMIT 200"},
+		{"where + offset", "sqlite", "id > 5", 100, 100,
+			`SELECT * FROM "t" WHERE id > 5 LIMIT 100 OFFSET 100`},
+		// SQL Server has no LIMIT — TOP on the first page, OFFSET…FETCH after.
+		{"sqlserver first page", "sqlserver", "", 200, 0, `SELECT TOP 200 * FROM "t"`},
+		{"sqlserver where", "sqlserver", "x = 1", 200, 0, `SELECT TOP 200 * FROM "t" WHERE x = 1`},
+		{"sqlserver paging", "sqlserver", "x = 1", 200, 200,
+			`SELECT * FROM "t" WHERE x = 1 ORDER BY (SELECT NULL) OFFSET 200 ROWS FETCH NEXT 200 ROWS ONLY`},
 	}
-	if got := previewQuery("sqlite", `"t"`, 50); got != `SELECT * FROM "t" LIMIT 50` {
-		t.Errorf("sqlite preview = %q", got)
-	}
-	// SQL Server has no LIMIT — it must use TOP.
-	if got := previewQuery("sqlserver", `"t"`, 200); got != `SELECT TOP 200 * FROM "t"` {
-		t.Errorf("sqlserver preview = %q", got)
+	for _, c := range cases {
+		q := "`t`"
+		if c.driver != "mysql" {
+			q = `"t"`
+		}
+		if got := previewQuery(c.driver, q, c.where, c.limit, c.offset); got != c.want {
+			t.Errorf("%s:\n  got  %q\n  want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -65,7 +82,7 @@ type fakeBrowserConn struct {
 }
 
 func (c *fakeBrowserConn) Query(context.Context, string, ...any) (driver.Rows, error) {
-	return nil, nil
+	return nameRows(nil), nil
 }
 func (c *fakeBrowserConn) Exec(context.Context, string, ...any) (driver.Result, error) {
 	return nil, nil

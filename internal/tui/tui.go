@@ -101,9 +101,13 @@ type App struct {
 	viewRows [][]any // rows currently rendered (after filtering); maps table row → values
 	hlRow    int     // Results row currently painted with the row-highlight bar (0 = none)
 
-	// Source of the current result, for in-place cell edit (UPDATE write-back).
+	// Source of the current result, for in-place cell edit (UPDATE write-back)
+	// and for the server-side WHERE filter / paging of a table preview.
 	resultTable    tableRef // single-table preview source (empty when not a preview)
 	resultEditable bool     // true only when the result is a single-table preview
+	resultWhere    string   // active WHERE expression of the preview ("" = none)
+	resultPage     int      // preview page (0-based; each page is resultLimit rows)
+	pendingWhere   string   // WHERE input text, applied on Enter (not per keystroke)
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -166,7 +170,9 @@ func (a *App) buildLayout() {
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
-	a.results = tview.NewTable().SetBorders(false).SetFixed(1, 0)
+	// SetBorders(true) draws grid lines between rows and columns so wide result
+	// sets stay readable (user feedback).
+	a.results = tview.NewTable().SetBorders(true).SetFixed(1, 0)
 	// Cell selection (rows + columns) so the cursor moves left/right between
 	// cells; the selected cell drives "view value" and (later) in-place edit.
 	a.results.SetSelectable(true, true)
@@ -256,7 +262,7 @@ func (a *App) keyBar() string {
 func (a *App) showHelp() {
 	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
 	help.SetBorder(true).SetTitle(" Help ")
-	a.pages.AddPage("help", centered(help, 46, 17), true, true)
+	a.pages.AddPage("help", centered(help, 64, 24), true, true)
 	a.helpOpen = true
 }
 
@@ -285,10 +291,12 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             drill in: connect+databases · pick database · preview table
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
-  /                 filter (Connections: databases · Schema: tables · Results: all-column fuzzy)
+  /                 filter (Connections: databases · Schema: tables · Results:
+                    WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
   c                 Results: edit the selected cell (single-table preview only)
+  ] / [             Results: next / previous preview page
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
@@ -499,14 +507,44 @@ func (a *App) onSchemaSelect(node *tview.TreeNode) {
 	node.SetExpanded(!node.IsExpanded())
 }
 
-// runTableQuery previews a table: the first resultLimit rows. The name is quoted
-// per dialect (and database-qualified when browsing another database).
+// runTableQuery previews a table from its first page, with no WHERE filter. The
+// name is quoted per dialect (and database-qualified when browsing another
+// database).
 func (a *App) runTableQuery(ref tableRef) {
-	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), resultLimit))
-	// A single-table preview is editable; runQuery cleared these for the generic
-	// case, so mark editability after it returns (it only spawns a goroutine).
 	a.resultTable = ref
+	a.resultWhere = ""
+	a.resultPage = 0
+	a.refreshPreview()
+}
+
+// refreshPreview (re-)runs the single-table preview with the current table,
+// WHERE filter, and page. runQuery clears the preview marks (they are wrong for
+// arbitrary SQL), so they are restored after it returns (it only spawns a
+// goroutine). Cell-edit refresh and paging reuse this so WHERE/page survive.
+func (a *App) refreshPreview() {
+	ref, where, page := a.resultTable, a.resultWhere, a.resultPage
+	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), where, resultLimit, page*resultLimit))
+	a.resultTable = ref
+	a.resultWhere = where
+	a.resultPage = page
 	a.resultEditable = true
+	a.setResultsTitle()
+}
+
+// setResultsTitle keeps the preview context (table · WHERE · page) visible in
+// the Results panel title; arbitrary SQL results reset it to the plain title.
+func (a *App) setResultsTitle() {
+	t := "[3] Results"
+	if a.resultTable.name != "" {
+		t += " — " + a.resultTable.name
+		if a.resultWhere != "" {
+			t += " WHERE " + a.resultWhere
+		}
+		if a.resultPage > 0 {
+			t += fmt.Sprintf(" · page %d", a.resultPage+1)
+		}
+	}
+	a.results.SetTitle(" " + t + " ")
 }
 
 // qualifyTable builds the quoted, optionally database-qualified table name.
@@ -518,13 +556,27 @@ func qualifyTable(driverName string, ref tableRef) string {
 	return t
 }
 
-// previewQuery builds a "first N rows" SELECT, dialect-aware: SQL Server has no
-// LIMIT and uses TOP instead.
-func previewQuery(driverName, qualified string, n int) string {
-	if driverName == "sqlserver" {
-		return fmt.Sprintf("SELECT TOP %d * FROM %s", n, qualified)
+// previewQuery builds one page of a table preview, dialect-aware. where is a
+// raw boolean expression typed by the user ("" = none) — this is a SQL tool,
+// so the expression is passed through verbatim. SQL Server has no LIMIT: the
+// first page uses TOP, later pages OFFSET…FETCH (which requires an ORDER BY,
+// satisfied with a constant).
+func previewQuery(driverName, qualified, where string, limit, offset int) string {
+	w := ""
+	if where != "" {
+		w = " WHERE " + where
 	}
-	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", qualified, n)
+	if driverName == "sqlserver" {
+		if offset == 0 {
+			return fmt.Sprintf("SELECT TOP %d * FROM %s%s", limit, qualified, w)
+		}
+		return fmt.Sprintf("SELECT * FROM %s%s ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
+			qualified, w, offset, limit)
+	}
+	if offset == 0 {
+		return fmt.Sprintf("SELECT * FROM %s%s LIMIT %d", qualified, w, limit)
+	}
+	return fmt.Sprintf("SELECT * FROM %s%s LIMIT %d OFFSET %d", qualified, w, limit, offset)
 }
 
 // queryResult holds a fetched result set.
@@ -545,10 +597,14 @@ func (a *App) runQuery(sql string) {
 		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
 	}
-	// Default: an arbitrary query result is not cell-editable; runTableQuery
-	// re-marks single-table previews as editable after this returns.
+	// Default: an arbitrary query result is not cell-editable and has no
+	// preview WHERE/page; refreshPreview re-marks table previews after this
+	// returns.
 	a.resultEditable = false
 	a.resultTable = tableRef{}
+	a.resultWhere = ""
+	a.resultPage = 0
+	a.setResultsTitle()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := a.conn
@@ -949,7 +1005,8 @@ func (a *App) execCellUpdate(sql string, args []any) {
 				return
 			}
 			a.SetStatus(fmt.Sprintf("updated %d row(s)", n))
-			a.runTableQuery(ref) // refresh from the DB
+			a.resultTable = ref
+			a.refreshPreview() // refresh from the DB, keeping WHERE/page
 		})
 	}()
 }
@@ -1016,7 +1073,59 @@ const (
 	filterTgtSchema
 	filterTgtConn
 	filterTgtResultsCol
+	filterTgtResultsWhere // server-side WHERE on a single-table preview
 )
+
+// applyWhere sets the preview's server-side WHERE expression and re-queries
+// from page 0. An empty expr clears the filter. No-op outside a preview, while
+// a query runs (state would drift), or when the expression is unchanged.
+func (a *App) applyWhere(expr string) {
+	if a.resultTable.name == "" || expr == a.resultWhere {
+		return
+	}
+	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
+		return
+	}
+	a.resultWhere = expr
+	a.resultPage = 0
+	a.refreshPreview()
+}
+
+// nextPage fetches the next preview page. A short page (< resultLimit rows)
+// means there is nothing further.
+func (a *App) nextPage() {
+	if a.resultTable.name == "" {
+		a.SetStatus("paging works on table previews")
+		return
+	}
+	if a.running {
+		return
+	}
+	if len(a.lastData) < resultLimit {
+		a.SetStatus("last page")
+		return
+	}
+	a.resultPage++
+	a.refreshPreview()
+}
+
+// prevPage fetches the previous preview page.
+func (a *App) prevPage() {
+	if a.resultTable.name == "" {
+		a.SetStatus("paging works on table previews")
+		return
+	}
+	if a.running {
+		return
+	}
+	if a.resultPage == 0 {
+		a.SetStatus("first page")
+		return
+	}
+	a.resultPage--
+	a.refreshPreview()
+}
 
 // filterRowsByColumn keeps rows whose cell in column colIdx fuzzy-matches term
 // (case-insensitive subsequence). An empty term returns data unchanged.
@@ -1068,7 +1177,11 @@ func (a *App) showColFilter() {
 
 // openFilterInput shows the shared single-line filter overlay.
 func (a *App) openFilterInput(title, initial string, onChange func(string)) {
-	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
+	a.openInputOverlay(title, " / ", initial, onChange)
+}
+
+func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) {
+	in := tview.NewInputField().SetLabel(label).SetText(initial)
 	in.SetChangedFunc(onChange)
 	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
 	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
@@ -1106,6 +1219,16 @@ func (a *App) showFilter() {
 		initial = a.schemaFilter
 		onChange = a.applySchemaFilter
 	default: // Results → rows
+		if a.resultTable.name != "" {
+			// Table preview: filter server-side with a WHERE expression. The
+			// text is only staged here — applied on Enter (hideFilter), never
+			// per keystroke, so half-typed SQL doesn't hit the database.
+			a.filterTarget = filterTgtResultsWhere
+			a.pendingWhere = a.resultWhere
+			a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
+				" WHERE ", a.resultWhere, func(s string) { a.pendingWhere = s })
+			return
+		}
 		a.filterTarget = filterTgtResults
 		if len(a.lastData) == 0 {
 			a.SetStatus("no results to filter")
@@ -1119,11 +1242,19 @@ func (a *App) showFilter() {
 }
 
 // hideFilter closes the filter overlay. When clear is true the active filter is
-// reset (restoring the full table or result set).
+// reset (restoring the full table or result set). The WHERE target is the
+// exception to the live-filter model: it applies on Enter (clear=false), since
+// it re-queries the database.
 func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
-	if clear {
+	if a.filterTarget == filterTgtResultsWhere {
+		if clear {
+			a.applyWhere("")
+		} else {
+			a.applyWhere(strings.TrimSpace(a.pendingWhere))
+		}
+	} else if clear {
 		switch a.filterTarget {
 		case filterTgtConn:
 			a.applyConnFilter("")
@@ -1519,6 +1650,16 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case 'c':
 			if a.focusIdx == 2 { // Results: change (edit) the selected cell
 				a.showCellEdit()
+				return nil
+			}
+		case ']':
+			if a.focusIdx == 2 { // Results: next preview page
+				a.nextPage()
+				return nil
+			}
+		case '[':
+			if a.focusIdx == 2 { // Results: previous preview page
+				a.prevPage()
 				return nil
 			}
 		}
