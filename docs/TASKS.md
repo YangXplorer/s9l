@@ -496,6 +496,14 @@
   - 现状：resultLimit=200，页码只在 ≥2 页时显示，分页存在感弱。
   - 产出：① `resultLimit` 200→**100**（用户要求 100 行/页）；② 预览标题**常显** `· page N`（第 1 页也显示）；③ 相关测试/文档同步。
   - DoD：E2E 翻页断言按 100 行/页；标题第 1 页即含 `page 1`；核心零改动。· 预估：0.25d
+- [x] **T6.6-4 Enter 编辑选中 cell（c 的别名）**
+  - 现状：cell 就地编辑（T6.3-3）已有但键位 `c` 不易被发现；用户期望"选中 cell 直接编辑并更新"。
+  - 产出：Results 焦点时 **Enter** 也打开 cell 编辑（与 `c` 同经路 `showCellEdit`，仍限单表预览+确认弹窗）；SQL 编辑器/其他面板的 Enter 行为不变；help 同步 `c / Enter`。
+  - DoD：白盒（Enter→cellEditOpen；非预览时不打开只提示）；核心零改动。· 预估：0.25d
+- [x] **T6.6-5 鼠标聚焦同步 + keybar 分页提示（修"翻不了页"）**
+  - 现状：用**鼠标点击** Results 后 tview 焦点已切换但内部 `focusIdx` 未同步，`]`/`[`/`v`/`f`/`c`/Enter 等面板键全部失效（用户反馈"没有办法显示下一页/上一页"）；且 `]`/`[` 只在 help 里，keybar 无提示。
+  - 产出：① 四个面板挂 `SetFocusFunc` → `syncFocus(i)`（更新 `focusIdx` + 边框高亮），鼠标/Tab/数字键三种聚焦方式一致；`focusPanel` 化简为 `SetFocus`；② keybar 增加 `[ ] page` 提示。
+  - DoD：白盒（`SetFocus(results)` 直接聚焦后 `focusIdx==2`、边框色正确；`]` 翻页生效）；keybar 含 page；核心零改动。· 预估：0.5d
 
 **Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤，失败自动回滚）、默认分页（100 行/页、页码常显）、网格线分隔（高亮不越线、行条浅于 cell）、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
