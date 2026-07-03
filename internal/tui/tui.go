@@ -19,6 +19,7 @@ import (
 	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
+	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
@@ -73,18 +74,18 @@ type App struct {
 	schemaFilter string
 
 	// Connections panel database list, retained so / can filter databases.
-	connDatabases []string         // databases under the connected (multi-db) connection
-	connFilter    string           // active database filter term
-	connDBOwner   string           // connID owning connDatabases (for dbNodeRef)
-	connDBNode    *tview.TreeNode  // the connection node whose children are those databases
+	connDatabases []string        // databases under the connected (multi-db) connection
+	connFilter    string          // active database filter term
+	connDBOwner   string          // connID owning connDatabases (for dbNodeRef)
+	connDBNode    *tview.TreeNode // the connection node whose children are those databases
 
 	filterTarget filterTarget // which panel the open filter input targets
 	filterCol    int          // Results column index for the column filter (f)
 
-	focusIdx     int
-	helpOpen     bool
-	historyOpen  bool
-	savedOpen    bool
+	focusIdx        int
+	helpOpen        bool
+	historyOpen     bool
+	savedOpen       bool
 	filterOpen      bool
 	connFormOpen    bool
 	confirmOpen     bool
@@ -98,6 +99,7 @@ type App struct {
 	lastData [][]any
 	filter   string
 	viewRows [][]any // rows currently rendered (after filtering); maps table row → values
+	hlRow    int     // Results row currently painted with the row-highlight bar (0 = none)
 
 	// Source of the current result, for in-place cell edit (UPDATE write-back).
 	resultTable    tableRef // single-table preview source (empty when not a preview)
@@ -174,8 +176,10 @@ func (a *App) buildLayout() {
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
 	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
 
-	// Selected-row highlight: a light bar with dark text (reverse under NO_COLOR).
-	a.results.SetSelectedStyle(a.theme.selectionStyle())
+	// The current cell gets the strong cursor style; the rest of its row is
+	// painted with the selection bar by highlightResultsRow, so the whole row
+	// reads as selected while the cell still stands out.
+	a.results.SetSelectedStyle(a.theme.cellCursorStyle())
 
 	a.status = tview.NewTextView().SetDynamicColors(true)
 	a.SetStatus(defaultStatus)
@@ -759,13 +763,39 @@ func (a *App) setResults(cols []string, data [][]any) {
 	a.fillResults(cols, data)
 }
 
-// onResultsCellChanged shows the selected cell's position (row · column) in the
-// status bar as the cursor moves through the Results table.
+// onResultsCellChanged repaints the row-highlight bar and shows the selected
+// cell's position (row · column) in the status bar as the cursor moves.
 func (a *App) onResultsCellChanged(row, col int) {
+	a.highlightResultsRow(row)
 	if row <= 0 || col < 0 || col >= len(a.lastCols) {
 		return // header row or out of range
 	}
 	a.SetStatus(fmt.Sprintf("row %d · col [::b]%s[::-]", row, a.lastCols[col]))
+}
+
+// highlightResultsRow paints every cell of row with the selection bar so the
+// whole row reads as selected (tview's own selected style only covers the
+// current cell, which is drawn on top with the stronger cell-cursor style),
+// and restores the previously highlighted row to the default cell look.
+func (a *App) highlightResultsRow(row int) {
+	if row < 1 {
+		row = 0 // header or no selection: just clear the old bar
+	}
+	if row == a.hlRow {
+		return
+	}
+	def := tcell.StyleDefault.
+		Foreground(tview.Styles.PrimaryTextColor).
+		Background(tview.Styles.PrimitiveBackgroundColor) // NewTableCell's default
+	for c := 0; c < a.results.GetColumnCount(); c++ {
+		if a.hlRow > 0 {
+			a.results.GetCell(a.hlRow, c).SetStyle(def)
+		}
+		if row > 0 {
+			a.results.GetCell(row, c).SetStyle(a.theme.selectionStyle())
+		}
+	}
+	a.hlRow = row
 }
 
 // showCellValue pops up the full value of the selected Results cell (useful for
@@ -1128,6 +1158,15 @@ func (a *App) fillResults(cols []string, data [][]any) {
 		}
 	}
 	a.results.ScrollToBeginning()
+	// Clear dropped the styled cells, and tview clamps an out-of-range selection
+	// silently (no callback), so re-select explicitly to repaint the row bar.
+	a.hlRow = 0
+	if len(data) > 0 && len(cols) > 0 {
+		row, col := a.results.GetSelection()
+		row = min(max(row, 1), len(data))
+		col = min(max(col, 0), len(cols)-1)
+		a.results.Select(row, col)
+	}
 }
 
 func drainRows(rows driver.Rows) ([]string, [][]any, error) {
@@ -1144,12 +1183,9 @@ func drainRows(rows driver.Rows) ([]string, [][]any, error) {
 	return cols, data, rows.Err()
 }
 
-func cellString(v any) string {
-	if v == nil {
-		return "NULL"
-	}
-	return fmt.Sprintf("%v", v)
-}
+// cellString formats a single value for display; render.Cell shows binary
+// values (invalid UTF-8 / control bytes) as 0x… hex instead of mojibake.
+func cellString(v any) string { return render.Cell(v) }
 
 // quoteIdent quotes a SQL identifier for the given driver (backticks for MySQL,
 // double quotes otherwise), escaping the quote char.

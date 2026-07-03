@@ -43,9 +43,9 @@ func newTheme() Theme {
 		Dim:           tcell.ColorGray,
 		Error:         tcell.ColorRed,
 		Selection:     tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // selected-row bar: same dark gray as the input fields
-		SelectionText: tcell.ColorWhite,                   // light text on the dark selection bar
+		SelectionText: tcell.ColorWhite,                    // light text on the dark selection bar
 		Field:         tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // input/modal surface: a touch lighter than the card
-		FieldText:     tcell.ColorWhite,                   // light text, readable on the dark field
+		FieldText:     tcell.ColorWhite,                    // light text, readable on the dark field
 		Contrast:      tcell.NewRGBColor(0x30, 0x35, 0x40), // dim slate fallback
 		Surface:       tcell.NewRGBColor(0x1e, 0x1e, 0x1e), // dark opaque card for modals/forms
 		Background:    tcell.NewRGBColor(0x14, 0x16, 0x1a), // opaque app background (darker than the card)
@@ -60,6 +60,16 @@ func (t Theme) selectionStyle() tcell.Style {
 		return tcell.StyleDefault.Reverse(true)
 	}
 	return tcell.StyleDefault.Background(t.Selection).Foreground(t.SelectionText)
+}
+
+// cellCursorStyle is the stronger style for the current Results cell so it
+// stands out inside the row-highlight bar (accent background + dark text), or
+// reverse+bold under NO_COLOR (the bar alone is plain reverse).
+func (t Theme) cellCursorStyle() tcell.Style {
+	if noColor() {
+		return tcell.StyleDefault.Reverse(true).Bold(true)
+	}
+	return tcell.StyleDefault.Background(t.Accent).Foreground(tcell.ColorBlack).Bold(true)
 }
 
 // noColor reports whether color output should be suppressed (NO_COLOR, see

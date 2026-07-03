@@ -99,6 +99,36 @@ func TestSelectionStyleNoColorReverses(t *testing.T) {
 	}
 }
 
+func TestCellCursorStyleStandsOut(t *testing.T) {
+	th := newTheme() // colors on
+	fg, bg, attr := th.cellCursorStyle().Decompose()
+	if bg != th.Accent {
+		t.Errorf("cell cursor background = %v, want Accent %v", bg, th.Accent)
+	}
+	if fg == bg {
+		t.Error("cell cursor foreground and background must differ")
+	}
+	if attr&tcell.AttrBold == 0 {
+		t.Error("cell cursor should be bold")
+	}
+	// The cursor must differ from the row bar so the cell is visible inside it.
+	if th.cellCursorStyle() == th.selectionStyle() {
+		t.Error("cell cursor style must differ from the row-highlight style")
+	}
+}
+
+func TestCellCursorStyleNoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	th := newTheme()
+	_, _, attr := th.cellCursorStyle().Decompose()
+	if attr&tcell.AttrReverse == 0 || attr&tcell.AttrBold == 0 {
+		t.Errorf("NO_COLOR cell cursor should be reverse+bold, got attrs %v", attr)
+	}
+	if th.cellCursorStyle() == th.selectionStyle() {
+		t.Error("cell cursor style must differ from the row-highlight style under NO_COLOR")
+	}
+}
+
 // Surface is an opaque dark card (so modals don't bleed through) when colors are
 // on, and collapses to the terminal default under NO_COLOR.
 func TestSurfaceOpaque(t *testing.T) {
