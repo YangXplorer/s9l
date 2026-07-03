@@ -209,14 +209,23 @@ func TestPreviewWherePagingE2E(t *testing.T) {
 
 	a.app.QueueUpdateDraw(func() { a.nextPage() })
 	wait("next page")
-	if s := snapshot(); s.rows != 50 || s.page != 1 {
-		t.Errorf("page 1: rows=%d page=%d, want 50/1", s.rows, s.page)
+	if s := snapshot(); s.rows != resultLimit || s.page != 1 {
+		t.Errorf("page 1: rows=%d page=%d, want %d/1", s.rows, s.page, resultLimit)
 	}
 
 	a.app.QueueUpdateDraw(func() { a.applyWhere("id <= 10") })
 	wait("where")
 	if s := snapshot(); s.rows != 10 || s.page != 0 || s.where != "id <= 10" {
 		t.Errorf("where: rows=%d page=%d where=%q, want 10/0/%q", s.rows, s.page, s.where, "id <= 10")
+	}
+
+	// A failing WHERE (bad column) keeps the rows on screen and rolls the
+	// WHERE/page back to the last successful values, so title matches data.
+	a.app.QueueUpdateDraw(func() { a.applyWhere("no_such_col = 1") })
+	wait("bad where")
+	if s := snapshot(); s.rows != 10 || s.where != "id <= 10" || s.page != 0 {
+		t.Errorf("bad where: rows=%d page=%d where=%q, want rollback to 10/0/%q",
+			s.rows, s.page, s.where, "id <= 10")
 	}
 
 	a.Stop()

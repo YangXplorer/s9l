@@ -28,9 +28,9 @@ import (
 
 const (
 	sidebarWidth = 30
-	// resultLimit caps rows fetched when browsing a table (full control via the
-	// SQL editor lands in T-2a).
-	resultLimit = 200
+	// resultLimit is the preview page size: table browsing pages through the
+	// table resultLimit rows at a time (] / [); full control via the SQL editor.
+	resultLimit = 100
 	// editorHeight is the SQL editor's fixed height in rows. tview gives the
 	// panel a 2-row border, so this is ~10 editable lines — roughly double the
 	// original 6 so multi-line statements have room.
@@ -61,7 +61,7 @@ type App struct {
 
 	connTree *tview.TreeView
 	schema   *tview.TreeView
-	results  *tview.Table
+	results  *gridTable
 	editor   *tview.TextArea
 	status   *tview.TextView
 	keybar   *tview.TextView
@@ -108,6 +108,8 @@ type App struct {
 	resultWhere    string   // active WHERE expression of the preview ("" = none)
 	resultPage     int      // preview page (0-based; each page is resultLimit rows)
 	pendingWhere   string   // WHERE input text, applied on Enter (not per keystroke)
+	goodWhere      string   // WHERE of the last successful preview query (rollback target)
+	goodPage       int      // page of the last successful preview query
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -171,8 +173,13 @@ func (a *App) buildLayout() {
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
 	// SetBorders(true) draws grid lines between rows and columns so wide result
-	// sets stay readable (user feedback).
-	a.results = tview.NewTable().SetBorders(true).SetFixed(1, 0)
+	// sets stay readable (user feedback); gridTable keeps the highlight styles
+	// from spilling onto those lines.
+	a.results = &gridTable{
+		Table: tview.NewTable().SetBorders(true).SetFixed(1, 0),
+		grid:  a.theme.Border,
+		bg:    a.theme.Background,
+	}
 	// Cell selection (rows + columns) so the cursor moves left/right between
 	// cells; the selected cell drives "view value" and (later) in-place edit.
 	a.results.SetSelectable(true, true)
@@ -514,6 +521,8 @@ func (a *App) runTableQuery(ref tableRef) {
 	a.resultTable = ref
 	a.resultWhere = ""
 	a.resultPage = 0
+	a.goodWhere = ""
+	a.goodPage = 0
 	a.refreshPreview()
 }
 
@@ -523,10 +532,13 @@ func (a *App) runTableQuery(ref tableRef) {
 // goroutine). Cell-edit refresh and paging reuse this so WHERE/page survive.
 func (a *App) refreshPreview() {
 	ref, where, page := a.resultTable, a.resultWhere, a.resultPage
+	good, goodPage := a.goodWhere, a.goodPage
 	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), where, resultLimit, page*resultLimit))
 	a.resultTable = ref
 	a.resultWhere = where
 	a.resultPage = page
+	a.goodWhere = good
+	a.goodPage = goodPage
 	a.resultEditable = true
 	a.setResultsTitle()
 }
@@ -540,9 +552,8 @@ func (a *App) setResultsTitle() {
 		if a.resultWhere != "" {
 			t += " WHERE " + a.resultWhere
 		}
-		if a.resultPage > 0 {
-			t += fmt.Sprintf(" · page %d", a.resultPage+1)
-		}
+		// Always show the page (even page 1) so paging (] / [) is discoverable.
+		t += fmt.Sprintf(" · page %d", a.resultPage+1)
 	}
 	a.results.SetTitle(" " + t + " ")
 }
@@ -604,6 +615,8 @@ func (a *App) runQuery(sql string) {
 	a.resultTable = tableRef{}
 	a.resultWhere = ""
 	a.resultPage = 0
+	a.goodWhere = ""
+	a.goodPage = 0
 	a.setResultsTitle()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -624,10 +637,20 @@ func (a *App) runQuery(sql string) {
 				cerr := classifyErr(err)
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
+				if a.resultTable.name != "" {
+					// A preview refresh failed (e.g. a bad WHERE expression):
+					// the old rows stay on screen, so roll the WHERE/page (and
+					// title) back to the last successful values to match them.
+					a.resultWhere, a.resultPage = a.goodWhere, a.goodPage
+					a.setResultsTitle()
+				}
 			} else {
 				a.setResults(res.cols, res.data)
 				a.recordHistory(sql, elapsed, len(res.data), nil)
 				a.SetStatus(fmt.Sprintf("%d rows · %s", len(res.data), elapsed.Round(time.Millisecond)))
+				if a.resultTable.name != "" {
+					a.goodWhere, a.goodPage = a.resultWhere, a.resultPage
+				}
 			}
 			if a.onResult != nil {
 				a.onResult()
@@ -845,10 +868,11 @@ func (a *App) highlightResultsRow(row int) {
 		Background(tview.Styles.PrimitiveBackgroundColor) // NewTableCell's default
 	for c := 0; c < a.results.GetColumnCount(); c++ {
 		if a.hlRow > 0 {
-			a.results.GetCell(a.hlRow, c).SetStyle(def)
+			a.results.GetCell(a.hlRow, c).SetStyle(def).SetTransparency(true)
 		}
 		if row > 0 {
-			a.results.GetCell(row, c).SetStyle(a.theme.selectionStyle())
+			// Opaque, so the bar fills the whole cell, not just the text run.
+			a.results.GetCell(row, c).SetStyle(a.theme.selectionStyle()).SetTransparency(false)
 		}
 	}
 	a.hlRow = row

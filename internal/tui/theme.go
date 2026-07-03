@@ -42,7 +42,7 @@ func newTheme() Theme {
 		Accent:        tcell.ColorGreen,
 		Dim:           tcell.ColorGray,
 		Error:         tcell.ColorRed,
-		Selection:     tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // selected-row bar: same dark gray as the input fields
+		Selection:     tcell.NewRGBColor(0x3a, 0x42, 0x36), // selected-row bar: a visible muted green-gray, one step softer than the cell cursor
 		SelectionText: tcell.ColorWhite,                    // light text on the dark selection bar
 		Field:         tcell.NewRGBColor(0x2a, 0x2a, 0x2a), // input/modal surface: a touch lighter than the card
 		FieldText:     tcell.ColorWhite,                    // light text, readable on the dark field
