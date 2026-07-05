@@ -515,6 +515,10 @@
   - 现状：kanmob 为 SQL Server；`WHERE last_name = '楊'` 中不带 N 的字面量按库默认排序规则（Azure 常为 Latin1）转成 `'?'`，**不报错但静默 0 行**（用户反馈"添加了条件检索不出来结果"）。
   - 产出：纯函数 `sqlserverNLiterals(expr)`——扫描单引号字面量（处理 `''` 转义），含非 ASCII 字符且未带 N 前缀时自动补 `N`；仅 `driverName=="sqlserver"` 的预览 WHERE 经路应用（cell 编辑走参数化查询、driver 已按 nvarchar 发送，不受影响）；标题仍显示用户原输入。
   - DoD：纯函数测试（普通/转义引号/已有 N/多字面量/纯 ASCII 不动/非 sqlserver 不动）；预览 WHERE 组 SQL 含 N 前缀；核心零改动。· 预估：0.5d
+- [x] **T6.7-3 启动状态栏显示构建版本（防"跑的是旧二进制"混淆）**
+  - 现状：用户多次反馈"改了没生效"，实为运行中的旧进程/旧二进制（Homebrew 0.11.0 vs 仓库 dev build）难以分辨。
+  - 产出：`tui.Options.Version`；启动状态栏显示 `ready · s9l <版本>`（release 为 ldflags tag；dev build 经 `runtime/debug.ReadBuildInfo` 显示 `dev-<git 短 revision>`）。
+  - DoD：白盒（状态栏含版本串）；核心零改动。· 预估：0.25d
 
 **Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤，失败自动回滚，sqlserver 非 ASCII 字面量自动加 N）、默认分页（100 行/页、页码常显，任意 SQL 结果客户端分页）、网格线分隔（高亮不越线、行条浅于 cell）、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
