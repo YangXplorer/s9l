@@ -412,6 +412,44 @@
 
 ---
 
+## Phase 7 — TUI 输入辅助：字段/SQL 补全 + 编辑器扩大（目标 v0.13）
+
+用户需求（v0.12.0 发布后反馈；v0.12.0 = Phase 6.4–6.7 的用户反馈集成，未单列 Phase）：① 检索框（WHERE 输入）里给出**字段候补提示**；② SQL 编辑器（[4] 面板）输入时给出**关键字/表/列候补**；③ [4] 面板可**按键扩大**。
+
+**核心设计决策：复用 REPL 已有补全资产，不新造引擎。**
+- `internal/repl/complete.go` 的 `repl.Completer`（关键字 + 表 + 列、`table.col` 修饰、`referencedTables` 启发式、`Complete(line, pos)` 光标语义）已存在且有测试——TUI 直接复用。
+- `cmd/s9l/complete.go` 的 `schemaCache`（live-first + `internal/schemacache` 磁盘写透、失败回退上次已知 schema）已实现 `repl.Schema`——提升为可共用（main 包私有 → 移到 `internal/repl`），cmd 与 tui 共用一份。
+- 延续原则：**只改 `internal/tui/` + 复用移动（repl/schemacache），driver 核心零改动**。
+
+**已知风险（设计期标注）**：
+- R1（T7-2）：tview `InputField` 自带 autocomplete 的 **Enter 语义与全局 onKey 的「Enter=提交 WHERE」冲突**——候补列表展开时 Enter 应先采用候补。tview 不公开"列表是否展开"，需经 `SetAutocompletedFunc`/候补数自维护 `acOpen` 标志；此交互是 T7-2 的主要工作量。
+- R2（T7-2/3）：`schemaCache.Columns()` 首取某表列是**同步 DB 调用**（Azure 往返几十 ms），在 UI goroutine 会瞬时卡顿。v1 接受（REPL 同款行为，且磁盘缓存二次起命中）；如实测碍手，后续任务改后台预取当前库列。
+- R3（T7-3）：`TextArea` 无内建补全。两个换算点：① 弹层**定位**依赖光标座标（不可得则 v1 降级停靠面板底边）；② **插入经路**的偏移换算——`repl.Completer.Complete(text, pos)` 的 pos 是 **rune 索引**，而 `TextArea` 的光标/`Replace(start, end, …)` 是**字节偏移**，byte⇄rune 换算做错会插错位置（降级定位也躲不开此项，DoD 必须覆盖多字节文本用例）。
+- R4（T7-2/3）：补全的元数据同步取列可能在**查询进行中**（`a.running`）发火，与执行中查询共用同一 `a.conn`——driver 实现不保证并发安全。约定：**running 期间补全不发 DB 往返**，只用 `lastCols`/已缓存候补/关键字（REPL 是提示符时补全、无此并发形态，复用时必须补此约束）。
+
+- [ ] **T7-1 补全数据源共用化（schemaCache 提升 + TUI 生命周期接线）**
+  - 现状：`schemaCache` 在 `cmd/s9l/complete.go`（main 包私有），TUI 无法引用；TUI 侧已有 `a.conn`/`connID`，且 `internal/schemacache` 支持按 connID 持久化。
+  - 产出：① `schemaCache` 移至 `internal/repl`（如 `repl.NewSchemaCache(ctx, conn, store, connID)`），cmd 改为引用（行为不变）；**readline 依赖的 `completerAdapter` 留在 cmd**（`internal/repl` 保持 terminal-independent），测试随之分拆（schemaCache 系迁 repl、adapter 系留 cmd）；② TUI `App` 持有 `completer *repl.Completer`——`connect()` 成功后重建（含 schemacache.OpenDefault 接线，失败静默降级 keywords-only）、切库（`onConnSelect` 库节点）时重建、`closeConn` 释放；③ 并发约定沿用「仅 UI goroutine 调用」+ R4（running 期间不发 DB 往返）。
+  - DoD：cmd REPL 补全零回归（迁移后测试仍绿）；TUI 白盒（fake conn：connect 后 completer 非 nil、Tables 候补可得、切库后表列表刷新）；核心零改动。· 依赖：无 · 预估：0.75d
+- [ ] **T7-2 检索框（WHERE/列过滤）字段候补**
+  - 现状：WHERE 表达式全手打，字段名靠记忆或切屏看表头，列名笔误只能靠报错/回滚发现（用户已踩过 `laste_name`）。
+  - 产出：① WHERE 输入框 `SetAutocompleteFunc`：提取光标前标识符前缀（引号内不触发），候补=**当前预览表的列**（`lastCols` 内存即得 + completer 兜底，遵守 R4），前缀匹配优先、子串次之、大小写不敏感；② 键位：`↓/↑` 在候补中移动、`Tab` 采用；**Enter 在候补展开时=采用候补、收起时=提交 WHERE**（经 `acOpen` 标志在 onKey `filterOpen` 分支分流，见 R1）；③ 采用后光标落在补全词尾，可继续输入。**非目标**：`f` 列过滤输入的是「该列的值」而非列名，字段候补对它无意义、不接入（若做应为该列 distinct 值候补，另立任务）。
+  - DoD：纯函数测试（前缀提取：普通/引号内跳过/表达式中段）；白盒（输入 `las` → 候补含 `last_name`；Enter 两态行为）；既有 WHERE E2E（含失败回滚）零回归；核心零改动。· 依赖：T7-1 · 预估：1d
+- [ ] **T7-3 SQL 编辑器（[4]）补全弹层**（本 Phase 关键路径）
+  - 现状：`tview.TextArea` 无内建补全，[4] 里写 SQL 全裸打。
+  - 产出：① 触发：标识符输入中自动（≥2 字符）+ `Ctrl-Space` 手动（遵守 R4：running 中只出缓存候补）；② 候补：复用 `repl.Completer.Complete(text, cursorPos)`（关键字 + 表 + 列 + `table.col` + referencedTables 上下文启发式，**不做完整 SQL 解析**；pos 按 R3 做 byte⇄rune 换算）；③ UI：编辑器面板内浮动 `tview.List` 弹层（光标行下方定位，座标不可得则停靠面板底边，见 R3），`↓/↑` 选（**弹层开时从 TextArea 光标移动改路由到候补导航**）、`Tab`/`Enter` 插入、`Esc` 关、继续打字实时过滤收窄；④ 新 `completionOpen` 标志进 `overlayOpen()` 与 onKey 路由（模式与既有 overlay 一致：flag 先行、Esc 优先关弹层不冒泡）；⑤ 插入实现经 `TextArea.Replace`（补全词替换当前前缀，**字节偏移**，多字节文本用例必测），撤销栈不破坏。
+  - DoD：白盒（触发→候补→Tab 采用后文本/光标正确，含多字节（日文列名/前文含 CJK）用例；`FROM ` 后候补含表名；`Esc` 只关弹层不清编辑器；F5 在弹层开时不误触发；↓/↑ 路由两态）；pty 冒烟（真实按键流打一条带补全的 SELECT）；核心零改动。· 依赖：T7-1 · 预估：2.5d
+- [ ] **T7-4 SQL 面板 F6 扩大/还原**
+  - 现状：`editorHeight` 固定 12 行，长 SQL 局促；[3]/[4] 高度比不可调。
+  - 产出：① **F6** 切换编辑器高度：默认 12 行 ⇄ 扩大（窗口高的 ~70%，Results 相应压缩），`Flex.ResizeItem` 实现、无布局重建；② 全局可用（编辑器聚焦输入中也生效——F 键不与文本冲突，与 F5 运行相邻成对）；③ keybar 增 `F6 zoom`、help 同步；④ 扩大状态在查询/翻页/补全等操作间保持，再按 F6 还原。
+  - DoD：白盒（toggle 后 ResizeItem 参数变化、再 toggle 还原、扩大态跑查询不复位）；keybar/help 同步；核心零改动。· 依赖：无（可先行）· 预估：0.5d
+
+**Phase 7 验收**：WHERE 输入框有当前表字段候补（Tab/Enter 采用、Enter 提交语义不回归；`f` 列过滤为值输入、明确不接列名候补）；SQL 编辑器有关键字/表/列补全弹层（自动+Ctrl-Space 触发、Esc 关闭、不干扰正常输入与 F5）；F6 扩大/还原编辑器且状态跨操作保持；补全数据 live-first + 磁盘缓存回退、连接/切库时正确重建；cmd REPL 补全零回归；核心 driver 接口零改动；CI 绿；纯函数 + 白盒 + pty 冒烟。
+
+**建议实施顺序**：T7-4（独立、0.5d 先见效）→ T7-1 → T7-2 → T7-3。合计 ~4.75d。
+
+---
+
 ## Phase 6 — 发布 v0.10 + Results 面板增强（目标 v0.11）
 
 按用户最新反馈：先把当前改动发版、清掉未处理 PR；随后增强 Results 面板——列过滤、`/` 全字段模糊检索、单元格左右移动与就地编辑（写回）。TUI 增强延续原则：**只改 `internal/tui/`（写回 UPDATE 复用 `driver.Conn.Exec` + import 的方言辅助），核心 driver 接口零改动**；纯函数 + 白盒 + pty 冒烟。
