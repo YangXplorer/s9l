@@ -435,10 +435,10 @@
   - 现状：WHERE 表达式全手打，字段名靠记忆或切屏看表头，列名笔误只能靠报错/回滚发现（用户已踩过 `laste_name`）。
   - 产出：① WHERE 输入框 `SetAutocompleteFunc`：提取光标前标识符前缀（引号内不触发），候补=**当前预览表的列**（`lastCols` 内存即得 + completer 兜底，遵守 R4），前缀匹配优先、子串次之、大小写不敏感；② 键位：`↓/↑` 在候补中移动、`Tab` 采用；**Enter 在候补展开时=采用候补、收起时=提交 WHERE**（经 `acOpen` 标志在 onKey `filterOpen` 分支分流，见 R1）；③ 采用后光标落在补全词尾，可继续输入。**非目标**：`f` 列过滤输入的是「该列的值」而非列名，字段候补对它无意义、不接入（若做应为该列 distinct 值候补，另立任务）。
   - DoD：纯函数测试（前缀提取：普通/引号内跳过/表达式中段）；白盒（输入 `las` → 候补含 `last_name`；Enter 两态行为）；既有 WHERE E2E（含失败回滚）零回归；核心零改动。· 依赖：T7-1 · 预估：1d
-- [ ] **T7-3 SQL 编辑器（[4]）补全弹层**（本 Phase 关键路径）
+- [x] **T7-3 SQL 编辑器（[4]）补全弹层**（本 Phase 关键路径）
   - 现状：`tview.TextArea` 无内建补全，[4] 里写 SQL 全裸打。
   - 产出：① 触发：标识符输入中自动（≥2 字符）+ `Ctrl-Space` 手动（遵守 R4：running 中只出缓存候补）；② 候补：复用 `repl.Completer.Complete(text, cursorPos)`（关键字 + 表 + 列 + `table.col` + referencedTables 上下文启发式，**不做完整 SQL 解析**；pos 按 R3 做 byte⇄rune 换算）；③ UI：编辑器面板内浮动 `tview.List` 弹层（光标行下方定位，座标不可得则停靠面板底边，见 R3），`↓/↑` 选（**弹层开时从 TextArea 光标移动改路由到候补导航**）、`Tab`/`Enter` 插入、`Esc` 关、继续打字实时过滤收窄；④ 新 `completionOpen` 标志进 `overlayOpen()` 与 onKey 路由（模式与既有 overlay 一致：flag 先行、Esc 优先关弹层不冒泡）；⑤ 插入实现经 `TextArea.Replace`（补全词替换当前前缀，**字节偏移**，多字节文本用例必测），撤销栈不破坏。
-  - DoD：白盒（触发→候补→Tab 采用后文本/光标正确，含多字节（日文列名/前文含 CJK）用例；`FROM ` 后候补含表名；`Esc` 只关弹层不清编辑器；F5 在弹层开时不误触发；↓/↑ 路由两态）；pty 冒烟（真实按键流打一条带补全的 SELECT）；核心零改动。· 依赖：T7-1 · 预估：2.5d
+  - DoD：白盒（触发→候补→Tab 采用后文本/光标正确，含多字节（日文列名/前文含 CJK）用例；`FROM ` 后候补含表名；`Esc` 只关弹层不清编辑器；F5 在弹层开时关闭弹层并正常运行、不误采用候补；↓/↑ 路由两态（开=候补导航、关=编辑器光标））；按键流冒烟（SimulationScreen InjectKey 打一条带补全的 SELECT）；核心 driver 接口零改动（计划内小逸脱：`repl.isWordRune` 放宽为 Unicode 字母/数字——CJK 标识符补全所需的向后兼容修复，REPL 同步受益，见 TUI.md）。· 依赖：T7-1 · 预估：2.5d
 - [x] **T7-4 SQL 面板 F6 扩大/还原**
   - 现状：`editorHeight` 固定 12 行，长 SQL 局促；[3]/[4] 高度比不可调。
   - 产出：① **F6** 切换编辑器高度：默认 12 行 ⇄ 扩大（窗口高的 ~70%，Results 相应压缩），`Flex.ResizeItem` 实现、无布局重建；② 全局可用（编辑器聚焦输入中也生效——F 键不与文本冲突，与 F5 运行相邻成对）；③ keybar 增 `F6 zoom`、help 同步；④ 扩大状态在查询/翻页/补全等操作间保持，再按 F6 还原。

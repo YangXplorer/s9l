@@ -3,6 +3,7 @@ package repl
 import (
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Schema supplies names for SQL completion. Implementations are expected to
@@ -98,16 +99,10 @@ func (c *Completer) columns(table string) []string {
 }
 
 // isWordRune reports whether r can be part of a completion word: identifier
-// characters plus '.' (qualified names) and '\' (meta-commands).
+// characters (Unicode letters/digits, so CJK table and column names complete
+// too) plus '.' (qualified names) and '\' (meta-commands).
 func isWordRune(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		return true
-	case r == '_' || r == '.' || r == '\\':
-		return true
-	default:
-		return false
-	}
+	return r == '_' || r == '.' || r == '\\' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // referencedTables returns the known tables that appear as whole words in line,

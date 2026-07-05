@@ -10,6 +10,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mattn/go-isatty v0.0.20
+	github.com/mattn/go-runewidth v0.0.16
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/rivo/tview v0.42.0
 	github.com/testcontainers/testcontainers-go v0.42.0

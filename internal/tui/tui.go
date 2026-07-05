@@ -138,6 +138,14 @@ type App struct {
 	completer *repl.Completer
 	compStore *schemacache.Store // persistent schema cache; nil = no persistence
 
+	// Editor completion popup state (T7-3).
+	completionOpen  bool
+	compList        *tview.List
+	compCands       []string // full candidate words shown in the popup
+	compPrefixBytes int      // byte length of the word being completed
+	compCursor      int      // byte offset of the cursor when the popup opened
+	compInserting   bool     // guards the changed hook during acceptCompletion
+
 	ready sync.Once
 }
 
@@ -208,6 +216,7 @@ func (a *App) buildLayout() {
 	a.titledPanel(a.results.Box, "[3] Results")
 
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
+	a.editor.SetChangedFunc(func() { a.updateEditorCompletion(true) })
 	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
 
 	// The current cell gets the strong cursor style; the rest of its row is
@@ -243,7 +252,9 @@ func (a *App) buildLayout() {
 	a.results.SetFocusFunc(func() { a.syncFocus(2) })
 	a.editor.SetFocusFunc(func() { a.syncFocus(3) })
 
-	a.pages = tview.NewPages().AddPage("main", root, true, true)
+	// completionHost draws the editor's completion popup above the panels
+	// (but below modal overlay pages) without involving Pages focus logic.
+	a.pages = tview.NewPages().AddPage("main", completionHost{Primitive: root, a: a}, true, true)
 	a.app.SetRoot(a.pages, true).EnableMouse(true)
 	a.focusPanel(0)
 }
@@ -286,6 +297,9 @@ func (a *App) overlayOpen() bool {
 func (a *App) syncFocus(i int) {
 	if a.overlayOpen() {
 		return // tview's transient refocus while an overlay opens/closes
+	}
+	if i != 3 {
+		a.hideCompletion() // the editor popup follows the editor's focus
 	}
 	a.focusIdx = i
 	a.connTree.SetBorderColor(a.theme.border(i == 0))
@@ -365,6 +379,7 @@ const helpText = `[::b]s9l TUI[::-]
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
   F6                zoom the SQL editor (toggle: 12 rows ⇄ ~70%)
+  ^Space            editor completion (auto after 2 chars; Tab/Enter adopt)
   /                 filter (Connections: databases · Schema: tables · Results:
                     WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
@@ -1669,6 +1684,37 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 			return nil
 		}
 		return ev
+	}
+
+	// While the editor's completion popup is open, navigation keys act on the
+	// popup and Tab/Enter adopt the candidate; everything else keeps editing
+	// (the editor's changed hook refreshes or closes the popup).
+	if a.completionOpen {
+		switch ev.Key() {
+		case tcell.KeyEscape:
+			a.hideCompletion()
+			return nil
+		case tcell.KeyDown:
+			a.moveCompletion(1)
+			return nil
+		case tcell.KeyUp:
+			a.moveCompletion(-1)
+			return nil
+		case tcell.KeyTab, tcell.KeyEnter:
+			a.acceptCompletion()
+			return nil
+		case tcell.KeyF5:
+			a.hideCompletion()
+			a.runEditor()
+			return nil
+		}
+		return ev
+	}
+
+	// Ctrl-Space opens the editor completion manually (no length threshold).
+	if ev.Key() == tcell.KeyCtrlSpace && a.app.GetFocus() == a.editor {
+		a.updateEditorCompletion(false)
+		return nil
 	}
 
 	// Vim-style navigation: h/j/k/l → Left/Down/Up/Right in any focused widget
