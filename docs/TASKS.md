@@ -427,11 +427,11 @@
 - R3（T7-3）：`TextArea` 无内建补全。两个换算点：① 弹层**定位**依赖光标座标（不可得则 v1 降级停靠面板底边）；② **插入经路**的偏移换算——`repl.Completer.Complete(text, pos)` 的 pos 是 **rune 索引**，而 `TextArea` 的光标/`Replace(start, end, …)` 是**字节偏移**，byte⇄rune 换算做错会插错位置（降级定位也躲不开此项，DoD 必须覆盖多字节文本用例）。
 - R4（T7-2/3）：补全的元数据同步取列可能在**查询进行中**（`a.running`）发火，与执行中查询共用同一 `a.conn`——driver 实现不保证并发安全。约定：**running 期间补全不发 DB 往返**，只用 `lastCols`/已缓存候补/关键字（REPL 是提示符时补全、无此并发形态，复用时必须补此约束）。
 
-- [ ] **T7-1 补全数据源共用化（schemaCache 提升 + TUI 生命周期接线）**
+- [x] **T7-1 补全数据源共用化（schemaCache 提升 + TUI 生命周期接线）**
   - 现状：`schemaCache` 在 `cmd/s9l/complete.go`（main 包私有），TUI 无法引用；TUI 侧已有 `a.conn`/`connID`，且 `internal/schemacache` 支持按 connID 持久化。
   - 产出：① `schemaCache` 移至 `internal/repl`（如 `repl.NewSchemaCache(ctx, conn, store, connID)`），cmd 改为引用（行为不变）；**readline 依赖的 `completerAdapter` 留在 cmd**（`internal/repl` 保持 terminal-independent），测试随之分拆（schemaCache 系迁 repl、adapter 系留 cmd）；② TUI `App` 持有 `completer *repl.Completer`——`connect()` 成功后重建（含 schemacache.OpenDefault 接线，失败静默降级 keywords-only）、切库（`onConnSelect` 库节点）时重建、`closeConn` 释放；③ 并发约定沿用「仅 UI goroutine 调用」+ R4（running 期间不发 DB 往返）。
   - DoD：cmd REPL 补全零回归（迁移后测试仍绿）；TUI 白盒（fake conn：connect 后 completer 非 nil、Tables 候补可得、切库后表列表刷新）；核心零改动。· 依赖：无 · 预估：0.75d
-- [ ] **T7-2 检索框（WHERE/列过滤）字段候补**
+- [x] **T7-2 检索框（WHERE/列过滤）字段候补**
   - 现状：WHERE 表达式全手打，字段名靠记忆或切屏看表头，列名笔误只能靠报错/回滚发现（用户已踩过 `laste_name`）。
   - 产出：① WHERE 输入框 `SetAutocompleteFunc`：提取光标前标识符前缀（引号内不触发），候补=**当前预览表的列**（`lastCols` 内存即得 + completer 兜底，遵守 R4），前缀匹配优先、子串次之、大小写不敏感；② 键位：`↓/↑` 在候补中移动、`Tab` 采用；**Enter 在候补展开时=采用候补、收起时=提交 WHERE**（经 `acOpen` 标志在 onKey `filterOpen` 分支分流，见 R1）；③ 采用后光标落在补全词尾，可继续输入。**非目标**：`f` 列过滤输入的是「该列的值」而非列名，字段候补对它无意义、不接入（若做应为该列 distinct 值候补，另立任务）。
   - DoD：纯函数测试（前缀提取：普通/引号内跳过/表达式中段）；白盒（输入 `las` → 候补含 `last_name`；Enter 两态行为）；既有 WHERE E2E（含失败回滚）零回归；核心零改动。· 依赖：T7-1 · 预估：1d

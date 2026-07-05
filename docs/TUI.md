@@ -216,6 +216,12 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 
 实现上 `showFilter`/`hideFilter` 由原布尔 `filterSchema` 改为三态 `filterTarget`（conn/schema/results），按 `focusIdx` 分派 title/initial/onChange。`Enter` 保留、`Esc` 清空。详见 [TASKS.md](./TASKS.md) Phase 5.3。
 
+## 输入辅助（Phase 7）
+
+- **补全数据源（T7-1）**：`repl.NewSchemaCache`（从 cmd 提升到 `internal/repl` 共用；live-first + schemacache 写透/失败回退，readline 适配器仍留 cmd）。TUI 侧 `tuiSchema` 适配：表名**优先**用 Schema 面板已加载的 `schemaTables`（跟随所选库，连接级 metadata 只见所连库）；预览表的列直接用 `lastCols`；**查询运行中不发 DB 往返**（R4——补全与运行中查询共用 `a.conn`）。completer 随 `connect()` 重建、`closeConn` 置空；schemacache store 惰性打开、`Run` 退出时关闭。
+- **WHERE 字段候补（T7-2）**：InputField `SetAutocompleteFunc`＝`whereCandidates`（光标前标识符前缀；引号内不补（奇偶校验含 `''` 转义）；前缀匹配优先+子串次之、大小写不敏感；唯一候补与已输入全等时不弹，避免采用后立刻重开）。`SetAutocompletedFunc` 用候补替换尾部前缀。**Enter 两态**：候补展开（`acOpen`）时 Enter/↑↓ 交给输入框选候补、Esc 只收列表；收起时 Enter 应用 WHERE、Esc 清除（onKey `filterOpen` 分支按 `acOpen` 分流）。
+- **F6 编辑器扩大（T7-4）**：`rightFlex.ResizeItem` 切换 editor 固定 12 行 ⇄ 比例 7:3（Results 压缩），布局不重建、状态跨查询/翻页/过滤保持；编辑器聚焦中也可用。
+
 ## Results 面板增强（Phase 6）
 
 - **全字段模糊检索 `/`**：`filterRows` 用 `fuzzyMatch`（大小写不敏感**子序列**）跨所有列匹配。
