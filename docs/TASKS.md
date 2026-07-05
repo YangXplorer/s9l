@@ -439,7 +439,7 @@
   - 现状：`tview.TextArea` 无内建补全，[4] 里写 SQL 全裸打。
   - 产出：① 触发：标识符输入中自动（≥2 字符）+ `Ctrl-Space` 手动（遵守 R4：running 中只出缓存候补）；② 候补：复用 `repl.Completer.Complete(text, cursorPos)`（关键字 + 表 + 列 + `table.col` + referencedTables 上下文启发式，**不做完整 SQL 解析**；pos 按 R3 做 byte⇄rune 换算）；③ UI：编辑器面板内浮动 `tview.List` 弹层（光标行下方定位，座标不可得则停靠面板底边，见 R3），`↓/↑` 选（**弹层开时从 TextArea 光标移动改路由到候补导航**）、`Tab`/`Enter` 插入、`Esc` 关、继续打字实时过滤收窄；④ 新 `completionOpen` 标志进 `overlayOpen()` 与 onKey 路由（模式与既有 overlay 一致：flag 先行、Esc 优先关弹层不冒泡）；⑤ 插入实现经 `TextArea.Replace`（补全词替换当前前缀，**字节偏移**，多字节文本用例必测），撤销栈不破坏。
   - DoD：白盒（触发→候补→Tab 采用后文本/光标正确，含多字节（日文列名/前文含 CJK）用例；`FROM ` 后候补含表名；`Esc` 只关弹层不清编辑器；F5 在弹层开时不误触发；↓/↑ 路由两态）；pty 冒烟（真实按键流打一条带补全的 SELECT）；核心零改动。· 依赖：T7-1 · 预估：2.5d
-- [ ] **T7-4 SQL 面板 F6 扩大/还原**
+- [x] **T7-4 SQL 面板 F6 扩大/还原**
   - 现状：`editorHeight` 固定 12 行，长 SQL 局促；[3]/[4] 高度比不可调。
   - 产出：① **F6** 切换编辑器高度：默认 12 行 ⇄ 扩大（窗口高的 ~70%，Results 相应压缩），`Flex.ResizeItem` 实现、无布局重建；② 全局可用（编辑器聚焦输入中也生效——F 键不与文本冲突，与 F5 运行相邻成对）；③ keybar 增 `F6 zoom`、help 同步；④ 扩大状态在查询/翻页/补全等操作间保持，再按 F6 还原。
   - DoD：白盒（toggle 后 ResizeItem 参数变化、再 toggle 还原、扩大态跑查询不复位）；keybar/help 同步；核心零改动。· 依赖：无（可先行）· 预估：0.5d

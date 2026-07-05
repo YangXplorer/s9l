@@ -62,12 +62,16 @@ type App struct {
 	store secret.SecretStore
 	hist  *history.Store
 
-	connTree *tview.TreeView
-	schema   *tview.TreeView
-	results  *gridTable
-	editor   *tview.TextArea
-	status   *tview.TextView
-	keybar   *tview.TextView
+	connTree  *tview.TreeView
+	schema    *tview.TreeView
+	results   *gridTable
+	editor    *tview.TextArea
+	rightFlex *tview.Flex // Results + editor column; kept for F6 editor zoom
+	// editorZoomed is the F6 toggle: the editor grows to most of the column
+	// (proportional 7:3) instead of its fixed default height.
+	editorZoomed bool
+	status       *tview.TextView
+	keybar       *tview.TextView
 
 	theme     Theme
 	version   string // running build, shown in the keybar (always visible)
@@ -216,12 +220,12 @@ func (a *App) buildLayout() {
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.connTree, 0, 2, true).
 		AddItem(a.schema, 0, 3, false)
-	right := tview.NewFlex().SetDirection(tview.FlexRow).
+	a.rightFlex = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.results, 0, 1, false).
 		AddItem(a.editor, editorHeight, 0, false)
 	body := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(left, sidebarWidth, 0, true).
-		AddItem(right, 0, 1, false)
+		AddItem(a.rightFlex, 0, 1, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(body, 0, 1, true).
 		AddItem(a.status, 1, 0, false).
@@ -283,12 +287,27 @@ func (a *App) syncFocus(i int) {
 	a.editor.SetBorderColor(a.theme.border(i == 3))
 }
 
+// toggleEditorZoom flips the SQL editor between its fixed default height and
+// most of the right column (7:3 over the Results table) — long statements get
+// room without leaving the TUI. Layout is resized in place, never rebuilt, so
+// the zoom survives queries, paging, and filters.
+func (a *App) toggleEditorZoom() {
+	a.editorZoomed = !a.editorZoomed
+	if a.editorZoomed {
+		a.rightFlex.ResizeItem(a.results, 0, 3)
+		a.rightFlex.ResizeItem(a.editor, 0, 7)
+	} else {
+		a.rightFlex.ResizeItem(a.results, 0, 1)
+		a.rightFlex.ResizeItem(a.editor, editorHeight, 0)
+	}
+}
+
 // keyBar renders the static bottom shortcut line with accent-colored keys.
 func (a *App) keyBar() string {
 	open := a.theme.tag(a.theme.Accent) + "[::b]"
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
-		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
+		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"F6", "zoom"}, {"/", "filter"},
 		{"[ ]", "page"}, {"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
@@ -338,6 +357,7 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             drill in: connect+databases · pick database · preview table
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
+  F6                zoom the SQL editor (toggle: 12 rows ⇄ ~70%)
   /                 filter (Connections: databases · Schema: tables · Results:
                     WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
@@ -1687,6 +1707,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyF5:
 		a.runEditor()
+		return nil
+	case tcell.KeyF6:
+		a.toggleEditorZoom()
 		return nil
 	case tcell.KeyCtrlR:
 		a.showHistory()
