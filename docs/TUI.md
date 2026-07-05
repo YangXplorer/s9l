@@ -223,6 +223,7 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 - **单元格导航**：`SetSelectable(true,true)`，`←/→`·`h/l` 在 cell 间移动；`v` 浮层查看完整值。
 - **单表预览 WHERE 过滤 `/`（服务端）**：预览时 `/` 打开 WHERE 表达式输入（label `WHERE`），Enter 应用（`applyWhere`→page 归零→`refreshPreview` 重查）、Esc 清除；不逐键查询（`pendingWhere` 暂存）。`previewQuery(driver, qualified, where, limit, offset)` 方言化：sqlserver 首页 `TOP n`、翻页 `ORDER BY (SELECT NULL) OFFSET…FETCH`，其余 `LIMIT [OFFSET]`。非预览结果 `/` 仍为客户端全字段模糊。当前表/WHERE/页码常驻 Results 标题（`setResultsTitle`；任意 SQL 执行时复位）。
 - **鼠标聚焦同步**：四面板 `SetFocusFunc`→`syncFocus(i)` 统一维护 `focusIdx`+边框色，鼠标点击与 Tab/数字键聚焦行为一致（否则面板键 `]`/`[`/`v`/`f`/`c`/Enter 在鼠标聚焦后失效）；keybar 常显 `[ ] page`。
+- **分页键 IME 容错**：`]`/`[` 之外接受 `>`/`<` 与全角 `］［＞＜`（CJK 输入法开启时物理键发出全角字符，否则翻页看似失灵）；查询进行中按键给状态栏提示而非静默。
 - **分页 `]` / `[`**：预览态 `resultPage`，`]` 下一页（仅满页时）/ `[` 上一页；`refreshPreview` 统一重查（编辑写回后的刷新同经路，WHERE/页码保留）；查询进行中翻页/换 WHERE 被拒绝（防状态漂移）。
 - **网格线**：Results `SetBorders(true)`，行列之间有线分隔。tview 会把 cell 背景涂到四周边框上（`bh=3/bw+2`），故用 `gridTable` 包装：`Draw` 后把网格线字形重涂为边框色+底色，高亮（行条/选中 cell）严格限制在格内。行条用比 accent 绿浅一档的可见中间色，行条 cell `SetTransparency(false)` 整格填充。
 - **WHERE 失败回滚**：预览记录最后成功的 `goodWhere/goodPage`；查询失败（如列名笔误）时回滚 `resultWhere/resultPage` 并复位标题，避免"标题显示了 WHERE 但数据没变"的错觉；错误信息在状态栏。

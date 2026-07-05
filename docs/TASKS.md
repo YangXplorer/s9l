@@ -515,6 +515,10 @@
   - 现状：kanmob 为 SQL Server；`WHERE last_name = '楊'` 中不带 N 的字面量按库默认排序规则（Azure 常为 Latin1）转成 `'?'`，**不报错但静默 0 行**（用户反馈"添加了条件检索不出来结果"）。
   - 产出：纯函数 `sqlserverNLiterals(expr)`——扫描单引号字面量（处理 `''` 转义），含非 ASCII 字符且未带 N 前缀时自动补 `N`；仅 `driverName=="sqlserver"` 的预览 WHERE 经路应用（cell 编辑走参数化查询、driver 已按 nvarchar 发送，不受影响）；标题仍显示用户原输入。
   - DoD：纯函数测试（普通/转义引号/已有 N/多字面量/纯 ASCII 不动/非 sqlserver 不动）；预览 WHERE 组 SQL 含 N 前缀；核心零改动。· 预估：0.5d
+- [x] **T6.7-4 翻页键 IME 容错（全角 ］［ / ＞＜ 与 > < 别名）**
+  - 现状：中文/日文输入法开启时按 `]` 发出的是全角 `］`，翻页完全无反应（用户在最新构建上反馈"翻页还是没有效果"，检索正常）；且查询进行中按翻页键静默忽略、无提示。
+  - 产出：① `]`/`[` 之外接受全角 `］`/`［`、`＞`/`＜` 及半角 `>`/`<` 作为翻页别名；② running 防抖从静默改为状态栏提示；③ help 同步 `] / [ · > / <`。
+  - DoD：白盒（各别名键翻页生效）；核心零改动。· 预估：0.25d
 - [x] **T6.7-3 启动状态栏显示构建版本（防"跑的是旧二进制"混淆）**
   - 现状：用户多次反馈"改了没生效"，实为运行中的旧进程/旧二进制（Homebrew 0.11.0 vs 仓库 dev build）难以分辨。
   - 产出：`tui.Options.Version`；启动状态栏显示 `ready · s9l <版本>`（release 为 ldflags tag；dev build 经 `runtime/debug.ReadBuildInfo` 显示 `dev-<git 短 revision>`）。
