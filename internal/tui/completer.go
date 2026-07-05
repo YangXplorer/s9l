@@ -8,6 +8,7 @@ import (
 	"github.com/YangXplorer/s9l/internal/repl"
 	"github.com/YangXplorer/s9l/internal/schemacache"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -108,6 +109,11 @@ func whereCandidates(cols []string, text string) []string {
 // the selected candidate; acOpen tells onKey to hand Enter/Esc to the input
 // while the list shows (Enter otherwise applies the filter).
 func (a *App) attachColumnCompletion(in *tview.InputField) {
+	// Same palette as the editor's completion popup (tview's defaults are
+	// unreadable on the dark theme): dark card, light text, accent cursor.
+	in.SetAutocompleteStyles(a.theme.Surface,
+		tcell.StyleDefault.Foreground(a.theme.FieldText).Background(a.theme.Surface),
+		a.theme.cellCursorStyle())
 	in.SetAutocompleteFunc(func(current string) []string {
 		entries := whereCandidates(a.lastCols, current)
 		a.acOpen = len(entries) > 0
