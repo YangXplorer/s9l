@@ -98,7 +98,9 @@ type App struct {
 	lastCols []string
 	lastData [][]any
 	filter   string
-	viewRows [][]any // rows currently rendered (after filtering); maps table row → values
+	viewRows [][]any // rows currently rendered (after filter + page); maps table row → values
+	viewAll  [][]any // rows after filtering, before client-side paging
+	viewPage int     // client-side page of an arbitrary (non-preview) result
 	hlRow    int     // Results row currently painted with the row-highlight bar (0 = none)
 
 	// Source of the current result, for in-place cell edit (UPDATE write-back)
@@ -328,7 +330,7 @@ const helpText = `[::b]s9l TUI[::-]
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
   c / Enter         Results: edit the selected cell (single-table preview only)
-  ] / [             Results: next / previous preview page
+  ] / [             Results: next / previous page (100 rows per page)
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
@@ -558,7 +560,14 @@ func (a *App) runTableQuery(ref tableRef) {
 func (a *App) refreshPreview() {
 	ref, where, page := a.resultTable, a.resultWhere, a.resultPage
 	good, goodPage := a.goodWhere, a.goodPage
-	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), where, resultLimit, page*resultLimit))
+	q := where
+	if a.driverName == "sqlserver" {
+		// Plain '…' literals lose non-ASCII characters under the database's
+		// default collation (silently matching nothing); make them N'…'. The
+		// title keeps the user's original input.
+		q = sqlserverNLiterals(where)
+	}
+	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), q, resultLimit, page*resultLimit))
 	a.resultTable = ref
 	a.resultWhere = where
 	a.resultPage = page
@@ -864,6 +873,7 @@ func (a *App) setResults(cols []string, data [][]any) {
 	a.lastCols = cols
 	a.lastData = data
 	a.filter = ""
+	a.viewPage = 0
 	a.fillResults(cols, data)
 }
 
@@ -913,11 +923,12 @@ func (a *App) showCellValue() {
 	if row <= 0 || col < 0 { // header or nothing selected
 		return
 	}
-	rows := filterRows(a.lastData, a.filter)
-	if row-1 >= len(rows) || col >= len(rows[row-1]) {
+	// viewRows is exactly what is rendered (filter + page applied), so the
+	// table row maps straight to its values.
+	if row-1 >= len(a.viewRows) || col >= len(a.viewRows[row-1]) {
 		return
 	}
-	val := cellString(rows[row-1][col])
+	val := cellString(a.viewRows[row-1][col])
 	title := fmt.Sprintf(" %s ", a.lastCols[col])
 	view := tview.NewTextView().SetText(val).SetWrap(true).SetScrollable(true)
 	view.SetTextColor(a.theme.FieldText)
@@ -1103,6 +1114,7 @@ func filterRows(data [][]any, term string) [][]any {
 // the match count in the status bar.
 func (a *App) applyFilter(term string) {
 	a.filter = term
+	a.viewPage = 0 // a changed filter restarts client-side paging
 	rows := filterRows(a.lastData, term)
 	a.fillResults(a.lastCols, rows)
 	if term == "" {
@@ -1141,11 +1153,17 @@ func (a *App) applyWhere(expr string) {
 	a.refreshPreview()
 }
 
-// nextPage fetches the next preview page. A short page (< resultLimit rows)
-// means there is nothing further.
+// nextPage advances one page: table previews re-query the next server page (a
+// short page means there is nothing further); arbitrary results move the
+// client-side slice.
 func (a *App) nextPage() {
 	if a.resultTable.name == "" {
-		a.SetStatus("paging works on table previews")
+		if (a.viewPage+1)*resultLimit >= len(a.viewAll) {
+			a.SetStatus("last page")
+			return
+		}
+		a.viewPage++
+		a.fillResults(a.lastCols, a.viewAll)
 		return
 	}
 	if a.running {
@@ -1159,10 +1177,16 @@ func (a *App) nextPage() {
 	a.refreshPreview()
 }
 
-// prevPage fetches the previous preview page.
+// prevPage goes back one page (server-side for previews, client-side slice for
+// arbitrary results).
 func (a *App) prevPage() {
 	if a.resultTable.name == "" {
-		a.SetStatus("paging works on table previews")
+		if a.viewPage == 0 {
+			a.SetStatus("first page")
+			return
+		}
+		a.viewPage--
+		a.fillResults(a.lastCols, a.viewAll)
 		return
 	}
 	if a.running {
@@ -1195,6 +1219,7 @@ func filterRowsByColumn(data [][]any, colIdx int, term string) [][]any {
 // column matches term, reporting the match count for that column.
 func (a *App) applyColFilter(term string) {
 	a.filter = term
+	a.viewPage = 0 // a changed filter restarts client-side paging
 	rows := filterRowsByColumn(a.lastData, a.filterCol, term)
 	a.fillResults(a.lastCols, rows)
 	name := ""
@@ -1319,7 +1344,26 @@ func (a *App) hideFilter(clear bool) {
 }
 
 // fillResults renders columns + rows into the Results table (header fixed).
+// Arbitrary (non-preview) results are paged client-side: only the viewPage-th
+// slice of resultLimit rows is rendered, with page N/M in the title. Previews
+// arrive already server-paged and render whole.
 func (a *App) fillResults(cols []string, data [][]any) {
+	a.viewAll = data
+	if a.resultTable.name == "" {
+		total := len(data)
+		lastPage := 0
+		if total > 0 {
+			lastPage = (total - 1) / resultLimit
+		}
+		a.viewPage = min(max(a.viewPage, 0), lastPage) // re-renders may shrink the set
+		if total > resultLimit {
+			start := a.viewPage * resultLimit
+			data = data[start:min(start+resultLimit, total)]
+			a.results.SetTitle(fmt.Sprintf(" [3] Results · page %d/%d ", a.viewPage+1, lastPage+1))
+		} else {
+			a.results.SetTitle(" [3] Results ")
+		}
+	}
 	a.viewRows = data // retained so a selected table row maps back to its values
 	a.results.Clear()
 	for c, name := range cols {

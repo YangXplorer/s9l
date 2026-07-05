@@ -123,6 +123,94 @@ func TestShowFilterPreviewUsesWhere(t *testing.T) {
 	}
 }
 
+// Arbitrary (non-preview) results page client-side: 250 rows render 100 at a
+// time, ]/[ move the slice, filters restart from page 1.
+func TestClientSidePaging(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Store: secret.NewMemory()})
+	data := make([][]any, 250)
+	for i := range data {
+		data[i] = []any{i}
+	}
+	a.setResults([]string{"id"}, data)
+
+	if got := a.results.GetRowCount(); got != resultLimit+1 {
+		t.Fatalf("page 1 rows = %d, want %d (header + %d)", got, resultLimit+1, resultLimit)
+	}
+	if title := a.results.GetTitle(); !strings.Contains(title, "page 1/3") {
+		t.Errorf("title %q should show page 1/3", title)
+	}
+
+	a.nextPage()
+	if a.viewPage != 1 || a.results.GetCell(1, 0).Text != "100" {
+		t.Errorf("page 2 starts at %q (viewPage=%d), want row 100", a.results.GetCell(1, 0).Text, a.viewPage)
+	}
+
+	a.nextPage() // page 3: the remaining 50 rows
+	if got := a.results.GetRowCount(); got != 51 {
+		t.Errorf("page 3 rows = %d, want 51 (header + 50)", got)
+	}
+	a.nextPage() // beyond the end: stays
+	if a.viewPage != 2 {
+		t.Errorf("nextPage past the end → viewPage %d, want 2", a.viewPage)
+	}
+
+	a.prevPage()
+	if a.viewPage != 1 {
+		t.Errorf("prevPage → viewPage %d, want 1", a.viewPage)
+	}
+
+	// A filter restarts paging; a small filtered set drops the page title.
+	a.applyFilter("1")
+	if a.viewPage != 0 {
+		t.Errorf("filter should reset viewPage, got %d", a.viewPage)
+	}
+
+	a.applyFilter("249")
+	if title := a.results.GetTitle(); strings.Contains(title, "page") {
+		t.Errorf("title %q should drop page N/M when one page suffices", title)
+	}
+	if got := a.results.GetRowCount(); got != 2 {
+		t.Errorf("filtered rows = %d, want 2 (header + 1)", got)
+	}
+}
+
+// sqlRecorder captures the SQL sent to Query so the preview WHERE path can be
+// asserted without an event loop.
+type sqlRecorder struct {
+	fakeBrowserConn
+	ch chan string
+}
+
+func (c *sqlRecorder) Query(_ context.Context, sql string, _ ...any) (driver.Rows, error) {
+	select {
+	case c.ch <- sql:
+	default:
+	}
+	return nameRows(nil), nil
+}
+
+// On SQL Server, a non-ASCII literal in the WHERE input must reach the server
+// N-prefixed, or it silently matches nothing under a Latin1 default collation.
+func TestSQLServerWhereGetsNPrefix(t *testing.T) {
+	a := previewApp()
+	a.driverName = "sqlserver"
+	rec := &sqlRecorder{ch: make(chan string, 1)}
+	a.conn = rec
+
+	a.applyWhere("last_name = '楊'")
+	select {
+	case sql := <-rec.ch:
+		if !strings.Contains(sql, "N'楊'") {
+			t.Errorf("sqlserver WHERE sql = %q, want N-prefixed literal", sql)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("query was not issued")
+	}
+	if a.resultWhere != "last_name = '楊'" {
+		t.Errorf("resultWhere = %q, should keep the user's original input", a.resultWhere)
+	}
+}
+
 func TestRunQueryClearsPreviewState(t *testing.T) {
 	a := previewApp()
 	a.conn = &fakeBrowserConn{}
