@@ -227,6 +227,8 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 - **网格线**：Results `SetBorders(true)`，行列之间有线分隔。tview 会把 cell 背景涂到四周边框上（`bh=3/bw+2`），故用 `gridTable` 包装：`Draw` 后把网格线字形重涂为边框色+底色，高亮（行条/选中 cell）严格限制在格内。行条用比 accent 绿浅一档的可见中间色，行条 cell `SetTransparency(false)` 整格填充。
 - **WHERE 失败回滚**：预览记录最后成功的 `goodWhere/goodPage`；查询失败（如列名笔误）时回滚 `resultWhere/resultPage` 并复位标题，避免"标题显示了 WHERE 但数据没变"的错觉；错误信息在状态栏。
 - **默认分页**：`resultLimit`=100（100 行/页），预览标题常显 `page N`（含第 1 页）。
+- **任意 SQL 结果客户端分页**：非预览结果 >100 行时按 `viewPage` 客户端切片渲染，`]`/`[` 复用（预览=服务端重查、任意结果=切片翻页），标题 `page N/M`；`/`、`f` 过滤后重新分页且回第 1 页；`v` 查看值经 `viewRows`（渲染切片）映射行。
+- **SQL Server Unicode 字面量**：不带 N 的 `'楊'` 会被库默认排序规则转成 `'?'` 静默 0 行——`sqlserverNLiterals` 在预览 WHERE 组 SQL 时自动给含非 ASCII 的单引号字面量补 `N` 前缀（处理 `''` 转义、跳过已有 N）；仅 sqlserver，cell 编辑为参数化查询不受影响。
 - **二进制值显示（乱码修复）**：driver 层把 `[]byte` 归一化为 `string`，二进制列（如 MySQL `binary(16)` UUID）原样打印会成乱码——`render.Cell` 对 `[]byte` 及含非法 UTF-8/控制字符的字符串改显 `0x…` 十六进制；TUI `cellString` 与 REPL 表格共用，csv/tsv/json 机器格式保持原始数据。
 - **选中行高亮 + 当前 cell 强调**：光标行**整行**套 `selectionStyle()` 行条（tview 表级选中样式只画当前 cell，整行由 `highlightResultsRow` 在选中变化时手动着色、旧行恢复默认）；**当前 cell** 由表级 `SetSelectedStyle(cellCursorStyle())`（accent 背景+黑字+粗体；NO_COLOR 下 reverse+bold）叠加凸显。`fillResults` 重渲染后显式 `Select` 重挂行高亮（Clear 丢样式且 tview 的选中钳制不触发回调）。
 - **就地编辑写回 `c` / Enter（`UPDATE`）**：Results 焦点时 Enter 是 `c` 的别名（电子表格直觉；其他面板 Enter 行为不变）。仅**单表预览**（`runTableQuery` 设 `resultEditable`/`resultTable`；`runQuery` 默认置否）可编辑。`buildUpdate` 生成 `UPDATE 表 SET 列=? WHERE <整行原值>`（NULL→`IS NULL`，方言 placeholder 经 `placeholderTUI`、标识符经 `quoteIdent`），确认弹窗显示 SQL → `conn.Exec` 异步执行 → 刷新预览、报告影响行数。**不做主键检测**（整行 WHERE，driver 零改动）；重复行一起更新（实害小）；设 NULL 暂未支持。核心 driver 接口零改动。

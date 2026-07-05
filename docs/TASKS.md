@@ -505,7 +505,18 @@
   - 产出：① 四个面板挂 `SetFocusFunc` → `syncFocus(i)`（更新 `focusIdx` + 边框高亮），鼠标/Tab/数字键三种聚焦方式一致；`focusPanel` 化简为 `SetFocus`；② keybar 增加 `[ ] page` 提示。
   - DoD：白盒（`SetFocus(results)` 直接聚焦后 `focusIdx==2`、边框色正确；`]` 翻页生效）；keybar 含 page；核心零改动。· 预估：0.5d
 
-**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤，失败自动回滚）、默认分页（100 行/页、页码常显）、网格线分隔（高亮不越线、行条浅于 cell）、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
+### 6.7 任意 SQL 结果分页 + SQL Server Unicode 字面量（用户反馈第三轮）
+
+- [x] **T6.7-1 任意 SQL 结果客户端分页（100 行/页）**
+  - 现状：分页只作用于单表预览（服务端 LIMIT/OFFSET）；F5 执行的任意 SQL 结果一次性全渲染，无翻页（用户反馈"结果添加翻页"）。
+  - 产出：① 非预览结果按 `resultLimit`(100) **客户端切片**渲染，`viewPage` 状态，`]`/`[` 复用（预览走服务端、其余走客户端）；② 标题显示 `page N/M`（总页数已知）；③ 与 `/` 模糊过滤、`f` 列过滤兼容（过滤后重新分页、换过滤词回第 1 页、页码越界自动收敛）；④ `v` 查看单元格值改用 `viewRows`（渲染切片），修过滤+分页下的行映射；⑤ help/keybar 文案同步。
+  - DoD：白盒（>100 行结果切片渲染、翻页边界、过滤后重分页、title N/M）；核心零改动。· 预估：0.75d
+- [x] **T6.7-2 SQL Server WHERE 非 ASCII 字面量自动加 N 前缀**
+  - 现状：kanmob 为 SQL Server；`WHERE last_name = '楊'` 中不带 N 的字面量按库默认排序规则（Azure 常为 Latin1）转成 `'?'`，**不报错但静默 0 行**（用户反馈"添加了条件检索不出来结果"）。
+  - 产出：纯函数 `sqlserverNLiterals(expr)`——扫描单引号字面量（处理 `''` 转义），含非 ASCII 字符且未带 N 前缀时自动补 `N`；仅 `driverName=="sqlserver"` 的预览 WHERE 经路应用（cell 编辑走参数化查询、driver 已按 nvarchar 发送，不受影响）；标题仍显示用户原输入。
+  - DoD：纯函数测试（普通/转义引号/已有 N/多字面量/纯 ASCII 不动/非 sqlserver 不动）；预览 WHERE 组 SQL 含 N 前缀；核心零改动。· 预估：0.5d
+
+**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤，失败自动回滚，sqlserver 非 ASCII 字面量自动加 N）、默认分页（100 行/页、页码常显，任意 SQL 结果客户端分页）、网格线分隔（高亮不越线、行条浅于 cell）、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
 ---
 
