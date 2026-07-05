@@ -20,6 +20,8 @@ import (
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/render"
+	"github.com/YangXplorer/s9l/internal/repl"
+	"github.com/YangXplorer/s9l/internal/schemacache"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
@@ -89,6 +91,7 @@ type App struct {
 
 	filterTarget filterTarget // which panel the open filter input targets
 	filterCol    int          // Results column index for the column filter (f)
+	acOpen       bool         // WHERE input's completion dropdown is showing
 
 	focusIdx        int
 	helpOpen        bool
@@ -130,6 +133,10 @@ type App struct {
 	connClose  func() error // closes conn + any SSH tunnel
 	connID     string
 	driverName string
+
+	// SQL completion (WHERE input, editor popup): rebuilt per connection.
+	completer *repl.Completer
+	compStore *schemacache.Store // persistent schema cache; nil = no persistence
 
 	ready sync.Once
 }
@@ -544,6 +551,7 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	a.driverName = cc.Driver
 	a.currentDB = ""
 	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)", cc.ID, cc.Driver))
+	a.buildCompleter(cc.ID)
 	// What to show after connecting (databases vs tables) is decided by the
 	// caller via loadConnDatabases, so auto-connect and Enter share one path.
 	return nil
@@ -1289,7 +1297,7 @@ func (a *App) openFilterInput(title, initial string, onChange func(string)) {
 	a.openInputOverlay(title, " / ", initial, onChange)
 }
 
-func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) {
+func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) *tview.InputField {
 	in := tview.NewInputField().SetLabel(label).SetText(initial)
 	in.SetChangedFunc(onChange)
 	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
@@ -1297,6 +1305,7 @@ func (a *App) openInputOverlay(title, label, initial string, onChange func(strin
 	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
 	a.app.SetFocus(in)
 	a.filterOpen = true
+	return in
 }
 
 // showFilter opens the / filter input for the focused panel. Typing filters
@@ -1334,8 +1343,9 @@ func (a *App) showFilter() {
 			// per keystroke, so half-typed SQL doesn't hit the database.
 			a.filterTarget = filterTgtResultsWhere
 			a.pendingWhere = a.resultWhere
-			a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
+			in := a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
 				" WHERE ", a.resultWhere, func(s string) { a.pendingWhere = s })
+			a.attachColumnCompletion(in) // column-name candidates while typing
 			return
 		}
 		a.filterTarget = filterTgtResults
@@ -1357,6 +1367,7 @@ func (a *App) showFilter() {
 func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
+	a.acOpen = false
 	if a.filterTarget == filterTgtResultsWhere {
 		if clear {
 			a.applyWhere("")
@@ -1584,6 +1595,14 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	// every other key (including j/k) is literal text for the input. Handled
 	// before vim-nav so typing isn't translated to arrows.
 	if a.filterOpen {
+		// While the completion dropdown is showing, Enter/arrows belong to the
+		// input (candidate selection), and Esc just closes the list.
+		if a.acOpen {
+			if ev.Key() == tcell.KeyEscape {
+				a.acOpen = false // the input closes its own list
+			}
+			return ev
+		}
 		switch ev.Key() {
 		case tcell.KeyEnter:
 			a.hideFilter(false)
@@ -1834,6 +1853,11 @@ func (a *App) setError(msg string) {
 // (if any) is closed on exit.
 func (a *App) Run() error {
 	defer a.closeConn()
+	defer func() {
+		if a.compStore != nil {
+			_ = a.compStore.Close()
+		}
+	}()
 	return a.app.Run()
 }
 
@@ -1846,6 +1870,7 @@ func (a *App) closeConn() {
 		a.connClose = nil
 	}
 	a.conn = nil
+	a.completer = nil // completion follows the connection
 }
 
 // --- testing seams ---
