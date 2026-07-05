@@ -343,7 +343,7 @@ const helpText = `[::b]s9l TUI[::-]
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
   c / Enter         Results: edit the selected cell (single-table preview only)
-  ] / [             Results: next / previous page (100 rows per page)
+  ] / [ · > / <     Results: next / previous page (100 rows per page)
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
@@ -1180,6 +1180,7 @@ func (a *App) nextPage() {
 		return
 	}
 	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
 	}
 	if len(a.lastData) < resultLimit {
@@ -1203,6 +1204,7 @@ func (a *App) prevPage() {
 		return
 	}
 	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
 	}
 	if a.resultPage == 0 {
@@ -1765,13 +1767,16 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 				a.showCellEdit()
 				return nil
 			}
-		case ']':
-			if a.focusIdx == 2 { // Results: next preview page
+		// '］'/'＞' and '［'/'＜' are the full-width forms a CJK input method
+		// emits for the same physical keys; accepting them keeps paging
+		// working without switching the IME to half-width.
+		case ']', '>', '］', '＞':
+			if a.focusIdx == 2 { // Results: next page
 				a.nextPage()
 				return nil
 			}
-		case '[':
-			if a.focusIdx == 2 { // Results: previous preview page
+		case '[', '<', '［', '＜':
+			if a.focusIdx == 2 { // Results: previous page
 				a.prevPage()
 				return nil
 			}

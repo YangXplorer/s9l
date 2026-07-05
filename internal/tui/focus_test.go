@@ -56,6 +56,28 @@ func TestPagingKeyAfterDirectFocus(t *testing.T) {
 	}
 }
 
+// A CJK input method emits full-width forms for the bracket keys; those (and
+// the shifted >/< mnemonics) must page too, or paging looks dead whenever the
+// IME is on.
+func TestPagingKeyAliases(t *testing.T) {
+	a := previewApp()
+	a.lastData = make([][]any, resultLimit)
+	a.app.SetFocus(a.results)
+
+	for i, r := range []rune{'］', '>', '＞'} {
+		a.onKey(tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone))
+		if a.resultPage != i+1 {
+			t.Fatalf("%q → page %d, want %d", r, a.resultPage, i+1)
+		}
+	}
+	for i, r := range []rune{'［', '<', '＜'} {
+		a.onKey(tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone))
+		if want := 2 - i; a.resultPage != want {
+			t.Fatalf("%q → page %d, want %d", r, a.resultPage, want)
+		}
+	}
+}
+
 // Enter on a Results cell opens the same edit input as c (single-table preview
 // only); outside a preview it only reports why, without opening.
 func TestEnterOpensCellEdit(t *testing.T) {
