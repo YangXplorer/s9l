@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -74,5 +78,30 @@ func TestEnterOpensCellEdit(t *testing.T) {
 	b.onKey(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone))
 	if b.cellEditOpen {
 		t.Error("Enter must not open the editor outside a single-table preview")
+	}
+}
+
+// The running build must stay identifiable: the startup status names it, and
+// the always-visible keybar keeps naming it even after auto-connect (or any
+// later action) rewrites the status line.
+func TestVersionVisibleInStatusAndKeybar(t *testing.T) {
+	a := New(Options{Config: sqliteCfg("demo", "x.db"), Version: "dev-abc1234"})
+	if got := a.status.GetText(false); !strings.Contains(got, "s9l dev-abc1234") {
+		t.Errorf("startup status = %q, want it to contain the version", got)
+	}
+	if got := a.keybar.GetText(false); !strings.Contains(got, "s9l dev-abc1234") {
+		t.Errorf("keybar = %q, want it to contain the version", got)
+	}
+
+	// Auto-connect overwrites the status line ("connected: …"), but the keybar
+	// still names the build — the scenario that motivated this feature.
+	db := filepath.Join(t.TempDir(), "v.db")
+	b := New(Options{Conn: "demo", Config: sqliteCfg("demo", db), Store: secret.NewMemory(), Version: "dev-abc1234"})
+	defer b.closeConn()
+	if got := b.status.GetText(false); strings.Contains(got, "dev-abc1234") {
+		t.Logf("status after auto-connect still shows version: %q (fine, not required)", got)
+	}
+	if got := b.keybar.GetText(false); !strings.Contains(got, "s9l dev-abc1234") {
+		t.Errorf("keybar after auto-connect = %q, want it to keep the version", got)
 	}
 }

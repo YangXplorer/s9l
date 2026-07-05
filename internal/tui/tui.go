@@ -48,6 +48,9 @@ type Options struct {
 	// History records/queries history. If nil, history features are disabled
 	// (New does no I/O); the cmd layer provides the real store.
 	History *history.Store
+	// Version, when set, is shown in the startup status line so the running
+	// build is identifiable at a glance (release tag or dev-<revision>).
+	Version string
 }
 
 // App is the s9l TUI application.
@@ -67,6 +70,7 @@ type App struct {
 	keybar   *tview.TextView
 
 	theme     Theme
+	version   string // running build, shown in the keybar (always visible)
 	currentDB string // database selected in the Connections tree (drives Schema)
 
 	// Schema panel table list, retained so the table filter can re-render.
@@ -129,10 +133,11 @@ type App struct {
 // New builds the TUI application and its layout, populating the connection list.
 func New(opts Options) *App {
 	a := &App{
-		app:   tview.NewApplication(),
-		cfg:   opts.Config,
-		store: opts.Store,
-		hist:  opts.History,
+		app:     tview.NewApplication(),
+		cfg:     opts.Config,
+		store:   opts.Store,
+		hist:    opts.History,
+		version: opts.Version,
 	}
 	if a.cfg == nil {
 		if cfg, err := config.Load(); err == nil {
@@ -149,6 +154,9 @@ func New(opts Options) *App {
 	a.theme.applyStyles()
 	useRoundedBorders()
 	a.buildLayout()
+	if opts.Version != "" {
+		a.SetStatus(defaultStatus + " · s9l " + opts.Version)
+	}
 	a.populateConnections()
 
 	a.app.SetInputCapture(a.onKey)
@@ -289,6 +297,11 @@ func (a *App) keyBar() string {
 			b.WriteString("  ")
 		}
 		b.WriteString(open + e.key + closing + " " + e.label)
+	}
+	if a.version != "" {
+		// The keybar is static and always visible, so the running build stays
+		// identifiable even after status-line updates (connect, queries, …).
+		b.WriteString("  " + a.theme.tag(a.theme.Dim) + "s9l " + a.version + a.theme.reset())
 	}
 	return b.String()
 }

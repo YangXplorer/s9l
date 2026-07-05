@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/YangXplorer/s9l/internal/config"
@@ -39,6 +40,28 @@ var (
 	commit  = "none"
 	date    = "unknown"
 )
+
+// displayVersion identifies the running build for the TUI status line: the
+// release tag when ldflags-injected, otherwise dev-<vcs revision> from the
+// embedded build info (so `go build` binaries are distinguishable too).
+func displayVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return "dev-" + s.Value[:7]
+			}
+		}
+		// go install module@version builds carry no VCS info, but do carry the
+		// module version.
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {

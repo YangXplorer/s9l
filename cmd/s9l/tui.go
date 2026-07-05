@@ -14,7 +14,7 @@ func runTUI(args []string) error {
 	if len(args) > 0 {
 		conn = args[0]
 	}
-	opts := tui.Options{Conn: conn, Store: secret.Default()}
+	opts := tui.Options{Conn: conn, Store: secret.Default(), Version: displayVersion()}
 	if h, err := history.OpenDefault(); err == nil {
 		opts.History = h
 		defer func() { _ = h.Close() }()
