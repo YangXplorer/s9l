@@ -221,4 +221,15 @@ T5 落地后的可读性/观感二次打磨，仍只改 `internal/tui/`、核心
 - **全字段模糊检索 `/`**：`filterRows` 用 `fuzzyMatch`（大小写不敏感**子序列**）跨所有列匹配。
 - **按列过滤 `f`**：`filterRowsByColumn` 仅匹配选中列；与 `/` 共用 `openFilterInput` 浮层，`filterTarget` 增 `filterTgtResultsCol`。
 - **单元格导航**：`SetSelectable(true,true)`，`←/→`·`h/l` 在 cell 间移动；`v` 浮层查看完整值。
-- **就地编辑写回 `c`（`UPDATE`）**：仅**单表预览**（`runTableQuery` 设 `resultEditable`/`resultTable`；`runQuery` 默认置否）可编辑。`buildUpdate` 生成 `UPDATE 表 SET 列=? WHERE <整行原值>`（NULL→`IS NULL`，方言 placeholder 经 `placeholderTUI`、标识符经 `quoteIdent`），确认弹窗显示 SQL → `conn.Exec` 异步执行 → 刷新预览、报告影响行数。**不做主键检测**（整行 WHERE，driver 零改动）；重复行一起更新（实害小）；设 NULL 暂未支持。核心 driver 接口零改动。
+- **单表预览 WHERE 过滤 `/`（服务端）**：预览时 `/` 打开 WHERE 表达式输入（label `WHERE`），Enter 应用（`applyWhere`→page 归零→`refreshPreview` 重查）、Esc 清除；不逐键查询（`pendingWhere` 暂存）。`previewQuery(driver, qualified, where, limit, offset)` 方言化：sqlserver 首页 `TOP n`、翻页 `ORDER BY (SELECT NULL) OFFSET…FETCH`，其余 `LIMIT [OFFSET]`。非预览结果 `/` 仍为客户端全字段模糊。当前表/WHERE/页码常驻 Results 标题（`setResultsTitle`；任意 SQL 执行时复位）。
+- **鼠标聚焦同步**：四面板 `SetFocusFunc`→`syncFocus(i)` 统一维护 `focusIdx`+边框色，鼠标点击与 Tab/数字键聚焦行为一致（否则面板键 `]`/`[`/`v`/`f`/`c`/Enter 在鼠标聚焦后失效）；keybar 常显 `[ ] page`。
+- **分页键 IME 容错**：`]`/`[` 之外接受 `>`/`<` 与全角 `］［＞＜`（CJK 输入法开启时物理键发出全角字符，否则翻页看似失灵）；查询进行中按键给状态栏提示而非静默。
+- **分页 `]` / `[`**：预览态 `resultPage`，`]` 下一页（仅满页时）/ `[` 上一页；`refreshPreview` 统一重查（编辑写回后的刷新同经路，WHERE/页码保留）；查询进行中翻页/换 WHERE 被拒绝（防状态漂移）。
+- **网格线**：Results `SetBorders(true)`，行列之间有线分隔。tview 会把 cell 背景涂到四周边框上（`bh=3/bw+2`），故用 `gridTable` 包装：`Draw` 后把网格线字形重涂为边框色+底色，高亮（行条/选中 cell）严格限制在格内。行条用比 accent 绿浅一档的可见中间色，行条 cell `SetTransparency(false)` 整格填充。
+- **WHERE 失败回滚**：预览记录最后成功的 `goodWhere/goodPage`；查询失败（如列名笔误）时回滚 `resultWhere/resultPage` 并复位标题，避免"标题显示了 WHERE 但数据没变"的错觉；错误信息在状态栏。
+- **默认分页**：`resultLimit`=100（100 行/页），预览标题常显 `page N`（含第 1 页）。
+- **任意 SQL 结果客户端分页**：非预览结果 >100 行时按 `viewPage` 客户端切片渲染，`]`/`[` 复用（预览=服务端重查、任意结果=切片翻页），标题 `page N/M`；`/`、`f` 过滤后重新分页且回第 1 页；`v` 查看值经 `viewRows`（渲染切片）映射行。
+- **SQL Server Unicode 字面量**：不带 N 的 `'楊'` 会被库默认排序规则转成 `'?'` 静默 0 行——`sqlserverNLiterals` 在预览 WHERE 组 SQL 时自动给含非 ASCII 的单引号字面量补 `N` 前缀（处理 `''` 转义、跳过已有 N）；仅 sqlserver，cell 编辑为参数化查询不受影响。
+- **二进制值显示（乱码修复）**：driver 层把 `[]byte` 归一化为 `string`，二进制列（如 MySQL `binary(16)` UUID）原样打印会成乱码——`render.Cell` 对 `[]byte` 及含非法 UTF-8/控制字符的字符串改显 `0x…` 十六进制；TUI `cellString` 与 REPL 表格共用，csv/tsv/json 机器格式保持原始数据。
+- **选中行高亮 + 当前 cell 强调**：光标行**整行**套 `selectionStyle()` 行条（tview 表级选中样式只画当前 cell，整行由 `highlightResultsRow` 在选中变化时手动着色、旧行恢复默认）；**当前 cell** 由表级 `SetSelectedStyle(cellCursorStyle())`（accent 背景+黑字+粗体；NO_COLOR 下 reverse+bold）叠加凸显。`fillResults` 重渲染后显式 `Select` 重挂行高亮（Clear 丢样式且 tview 的选中钳制不触发回调）。
+- **就地编辑写回 `c` / Enter（`UPDATE`）**：Results 焦点时 Enter 是 `c` 的别名（电子表格直觉；其他面板 Enter 行为不变）。仅**单表预览**（`runTableQuery` 设 `resultEditable`/`resultTable`；`runQuery` 默认置否）可编辑。`buildUpdate` 生成 `UPDATE 表 SET 列=? WHERE <整行原值>`（NULL→`IS NULL`，方言 placeholder 经 `placeholderTUI`、标识符经 `quoteIdent`），确认弹窗显示 SQL → `conn.Exec` 异步执行 → 刷新预览、报告影响行数。**不做主键检测**（整行 WHERE，driver 零改动）；重复行一起更新（实害小）；设 NULL 暂未支持。核心 driver 接口零改动。

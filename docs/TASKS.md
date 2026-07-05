@@ -457,7 +457,74 @@
   - 风险：**数据变更**、无事务 API（单条 Exec 自动提交，失败仅提示已/未改）、PK 检测各库差异、类型/编码、并发改动。**开工前出小设计评审**。
   - DoD：纯函数 `buildUpdate`（各方言 SET/WHERE/placeholder）测试；白盒（fake conn：编辑→生成正确 UPDATE→Exec 调用参数）；E2E SQLite（预览表→改一格→count/值校验）；无主键/非单表时禁用并提示；docs 同步。· 预估：2–3d
 
-**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
+### 6.4 Results 选中行整行高亮 + 当前 cell 强调
+
+- [x] **T6.4-1 选中行整行高亮，当前 cell 更强凸显**
+  - 目标：光标所在**行整体**着高亮条（lazygit 式行条），**当前 cell** 在行内用更强样式（accent 反色）凸显——行/列位置一眼可辨（用户反馈）。
+  - 产出：① Theme 新增 `cellCursorStyle()`（accent 背景 + 黑字 + 加粗；NO_COLOR 下 reverse+bold），Results 表级 `SetSelectedStyle` 改用之；② 选中变化时给当前行所有 cell 套 `selectionStyle()` 行条、旧行恢复默认样式（`highlightResultsRow`，tview 表级选中样式只画当前 cell，整行需手动着色）；③ `fillResults` 重渲染（过滤/编辑刷新）后重挂行高亮（Clear 会丢 cell 样式，且 tview 的选中位置钳制不触发回调，需显式 `Select`）。
+  - DoD：白盒（选中行各 cell 背景=Selection、移动后旧行恢复默认、重渲染后行高亮保持）；NO_COLOR 降级可见（行 reverse、cell reverse+bold）；核心零改动。· 预估：0.5d
+- [x] **T6.4-2 二进制值乱码修复（binary/BLOB → 十六进制显示）**
+  - 现状：各 driver 的 rowsAdapter 将 `[]byte` 一律归一化为 `string`，MySQL `binary(16)` UUID 等二进制列在 Results/REPL 表格显示为乱码（用户截图反馈）。
+  - 产出：① 新增 `render.Cell(v)` 单值人读格式化（nil→NULL；`[]byte` 或含非法 UTF-8/控制字符的 `string` → `0x…` 十六进制；其余 `%v`）；② REPL 表格 `format` 与 TUI `cellString` 复用之；机器格式（csv/tsv/json）不变，保数据保真。**driver 层零改动**（归一化行为保持，修在显示层）。
+  - DoD：`render.Cell` 单测（文本/CJK/多行保持、二进制→hex、非法 UTF-8→hex、NULL）；表格渲染含二进制列不乱码；TUI 白盒；核心 driver 零改动。· 预估：0.5d
+
+### 6.5 Results WHERE 过滤 + 分页 + 网格线（用户反馈）
+
+- [x] **T6.5-1 单表预览 WHERE 过滤（服务端）**
+  - 现状：`/` 是客户端全字段模糊，只在已取回的 200 行内筛。用户希望 filter 以"添加 WHERE 条件"的形式作用于整表。
+  - 产出：① 单表预览（`resultTable` 有效）时 `/` 改为 WHERE 表达式输入（Enter 应用、Esc 清除；**不逐键实时查询**，避免半截 SQL 打库）；② `previewQuery` 扩展为 `(driver, qualified, where, limit, offset)`（sqlserver 首页 TOP、翻页 `ORDER BY (SELECT NULL) OFFSET…FETCH`；其余 `LIMIT n [OFFSET m]`）；③ Results 标题显示当前表/WHERE/页码（`setResultsTitle`）；④ 非法表达式→查询报错入状态栏、原结果保留；⑤ 非预览结果（任意 SQL）`/` 保持客户端模糊，`f` 列过滤不变。
+  - DoD：`previewQuery` 纯函数测试（各方言 × where × offset）；白盒（WHERE 应用→重查 SQL 含 WHERE 且 page 归零；Esc 清除恢复；任意 SQL 清空预览态）；SQLite E2E（WHERE 过滤行数正确）；核心零改动。· 预估：1d
+- [x] **T6.5-2 Results 分页**
+  - 现状：预览固定 `LIMIT 200`，超出部分不可见。
+  - 产出：① 预览态含 `resultPage`，`]` 下一页 / `[` 上一页（Results 焦点、预览时）；② 满页（=resultLimit）才允许下一页，末页/首页给提示；③ 与 WHERE 共用 `refreshPreview` 经路（编辑写回后的刷新也走它，保留 WHERE/页码）；④ 标题显示 `page N`；⑤ help 同步。
+  - DoD：白盒（翻页 SQL 带 OFFSET、页码状态、末页/首页/查询中防抖边界）；SQLite E2E（>200 行表翻页内容正确、不重叠）；核心零改动。· 预估：0.75d
+- [x] **T6.5-3 Results 行列网格线**
+  - 产出：Results 表 `SetBorders(true)`——行与行、列与列之间有网格线（用户反馈：行列希望有线相隔）。与 T6.4-1 行高亮/选中 cell 样式兼容。
+  - DoD：现有行高亮白盒仍绿；pty/目视确认网格线与选中样式共存；核心零改动。· 预估：0.25d
+
+### 6.6 高亮/分页/WHERE 反馈修正（用户截图反馈第二轮）
+
+- [x] **T6.6-1 高亮不越出网格线 + 行条比 cell 浅一档且可见**
+  - 现状：tview 带边框表格把选中 cell 的背景涂在**含四周边框**的区域（`table.go` 中 `bh=3/bw+2`），绿色高亮溢出到网格线；行条(0x2a2a2a)在深底上几乎不可见，且 cell 默认 `Transparent`，行条只染文字不染整格。
+  - 产出：① `gridTable`（嵌入 `tview.Table`，`Draw` 后把网格线字形（─│┼├┤┬┴╭╮╰╯等）重涂为边框色+底色，高亮严格限制在格内）；② 行条调亮为可见的中间色（比 cell 的 accent 绿浅一档），行条 cell `SetTransparency(false)` 整格填充、恢复时还原；③ NO_COLOR 降级不受影响。
+  - DoD：白盒（SimulationScreen 绘制后网格线字形背景=底色，无高亮渗色）；行高亮既有白盒仍绿；核心零改动。· 预估：0.75d
+- [x] **T6.6-2 WHERE 失败回滚（标题与数据一致）**
+  - 现状：WHERE 表达式出错（如列名笔误 `laste_name`）时旧结果保留、错误只在状态栏，但标题仍显示失败的 WHERE——用户以为"检索结果不对"。
+  - 产出：预览态记录**最后一次成功**的 `goodWhere/goodPage`；查询失败且处于预览时回滚 `resultWhere/resultPage` 并复位标题；成功时更新 good 值；任意 SQL 清空。
+  - DoD：SQLite E2E（坏 WHERE → 错误入状态栏、标题/状态回滚到上个成功值、数据不变）；核心零改动。· 预估：0.5d
+- [x] **T6.6-3 默认分页 100 行/页 + 页码常显**
+  - 现状：resultLimit=200，页码只在 ≥2 页时显示，分页存在感弱。
+  - 产出：① `resultLimit` 200→**100**（用户要求 100 行/页）；② 预览标题**常显** `· page N`（第 1 页也显示）；③ 相关测试/文档同步。
+  - DoD：E2E 翻页断言按 100 行/页；标题第 1 页即含 `page 1`；核心零改动。· 预估：0.25d
+- [x] **T6.6-4 Enter 编辑选中 cell（c 的别名）**
+  - 现状：cell 就地编辑（T6.3-3）已有但键位 `c` 不易被发现；用户期望"选中 cell 直接编辑并更新"。
+  - 产出：Results 焦点时 **Enter** 也打开 cell 编辑（与 `c` 同经路 `showCellEdit`，仍限单表预览+确认弹窗）；SQL 编辑器/其他面板的 Enter 行为不变；help 同步 `c / Enter`。
+  - DoD：白盒（Enter→cellEditOpen；非预览时不打开只提示）；核心零改动。· 预估：0.25d
+- [x] **T6.6-5 鼠标聚焦同步 + keybar 分页提示（修"翻不了页"）**
+  - 现状：用**鼠标点击** Results 后 tview 焦点已切换但内部 `focusIdx` 未同步，`]`/`[`/`v`/`f`/`c`/Enter 等面板键全部失效（用户反馈"没有办法显示下一页/上一页"）；且 `]`/`[` 只在 help 里，keybar 无提示。
+  - 产出：① 四个面板挂 `SetFocusFunc` → `syncFocus(i)`（更新 `focusIdx` + 边框高亮），鼠标/Tab/数字键三种聚焦方式一致；`focusPanel` 化简为 `SetFocus`；② keybar 增加 `[ ] page` 提示。
+  - DoD：白盒（`SetFocus(results)` 直接聚焦后 `focusIdx==2`、边框色正确；`]` 翻页生效）；keybar 含 page；核心零改动。· 预估：0.5d
+
+### 6.7 任意 SQL 结果分页 + SQL Server Unicode 字面量（用户反馈第三轮）
+
+- [x] **T6.7-1 任意 SQL 结果客户端分页（100 行/页）**
+  - 现状：分页只作用于单表预览（服务端 LIMIT/OFFSET）；F5 执行的任意 SQL 结果一次性全渲染，无翻页（用户反馈"结果添加翻页"）。
+  - 产出：① 非预览结果按 `resultLimit`(100) **客户端切片**渲染，`viewPage` 状态，`]`/`[` 复用（预览走服务端、其余走客户端）；② 标题显示 `page N/M`（总页数已知）；③ 与 `/` 模糊过滤、`f` 列过滤兼容（过滤后重新分页、换过滤词回第 1 页、页码越界自动收敛）；④ `v` 查看单元格值改用 `viewRows`（渲染切片），修过滤+分页下的行映射；⑤ help/keybar 文案同步。
+  - DoD：白盒（>100 行结果切片渲染、翻页边界、过滤后重分页、title N/M）；核心零改动。· 预估：0.75d
+- [x] **T6.7-2 SQL Server WHERE 非 ASCII 字面量自动加 N 前缀**
+  - 现状：kanmob 为 SQL Server；`WHERE last_name = '楊'` 中不带 N 的字面量按库默认排序规则（Azure 常为 Latin1）转成 `'?'`，**不报错但静默 0 行**（用户反馈"添加了条件检索不出来结果"）。
+  - 产出：纯函数 `sqlserverNLiterals(expr)`——扫描单引号字面量（处理 `''` 转义），含非 ASCII 字符且未带 N 前缀时自动补 `N`；仅 `driverName=="sqlserver"` 的预览 WHERE 经路应用（cell 编辑走参数化查询、driver 已按 nvarchar 发送，不受影响）；标题仍显示用户原输入。
+  - DoD：纯函数测试（普通/转义引号/已有 N/多字面量/纯 ASCII 不动/非 sqlserver 不动）；预览 WHERE 组 SQL 含 N 前缀；核心零改动。· 预估：0.5d
+- [x] **T6.7-4 翻页键 IME 容错（全角 ］［ / ＞＜ 与 > < 别名）**
+  - 现状：中文/日文输入法开启时按 `]` 发出的是全角 `］`，翻页完全无反应（用户在最新构建上反馈"翻页还是没有效果"，检索正常）；且查询进行中按翻页键静默忽略、无提示。
+  - 产出：① `]`/`[` 之外接受全角 `］`/`［`、`＞`/`＜` 及半角 `>`/`<` 作为翻页别名；② running 防抖从静默改为状态栏提示；③ help 同步 `] / [ · > / <`。
+  - DoD：白盒（各别名键翻页生效）；核心零改动。· 预估：0.25d
+- [x] **T6.7-3 启动状态栏显示构建版本（防"跑的是旧二进制"混淆）**
+  - 现状：用户多次反馈"改了没生效"，实为运行中的旧进程/旧二进制（Homebrew 0.11.0 vs 仓库 dev build）难以分辨。
+  - 产出：`tui.Options.Version`；启动状态栏显示 `ready · s9l <版本>`（release 为 ldflags tag；dev build 经 `runtime/debug.ReadBuildInfo` 显示 `dev-<git 短 revision>`）。
+  - DoD：白盒（状态栏含版本串）；核心零改动。· 预估：0.25d
+
+**Phase 6 验收**：v0.10.0 已发布、open PR 清空；Results 支持列过滤、`/` 全字段模糊检索（预览时为服务端 WHERE 过滤，失败自动回滚，sqlserver 非 ASCII 字面量自动加 N）、默认分页（100 行/页、页码常显，任意 SQL 结果客户端分页）、网格线分隔（高亮不越线、行条浅于 cell）、单元格左右移动与（单表+主键时）就地编辑写回；非单表/无主键安全降级为只读；选中行整行高亮且当前 cell 强调；核心 driver 接口零改动；CI 绿；逻辑白盒 + E2E + pty 冒烟。
 
 ---
 

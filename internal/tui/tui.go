@@ -19,6 +19,7 @@ import (
 	"github.com/YangXplorer/s9l/internal/dial"
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
+	"github.com/YangXplorer/s9l/internal/render"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
@@ -27,9 +28,9 @@ import (
 
 const (
 	sidebarWidth = 30
-	// resultLimit caps rows fetched when browsing a table (full control via the
-	// SQL editor lands in T-2a).
-	resultLimit = 200
+	// resultLimit is the preview page size: table browsing pages through the
+	// table resultLimit rows at a time (] / [); full control via the SQL editor.
+	resultLimit = 100
 	// editorHeight is the SQL editor's fixed height in rows. tview gives the
 	// panel a 2-row border, so this is ~10 editable lines — roughly double the
 	// original 6 so multi-line statements have room.
@@ -47,6 +48,9 @@ type Options struct {
 	// History records/queries history. If nil, history features are disabled
 	// (New does no I/O); the cmd layer provides the real store.
 	History *history.Store
+	// Version, when set, is shown in the startup status line so the running
+	// build is identifiable at a glance (release tag or dev-<revision>).
+	Version string
 }
 
 // App is the s9l TUI application.
@@ -60,12 +64,13 @@ type App struct {
 
 	connTree *tview.TreeView
 	schema   *tview.TreeView
-	results  *tview.Table
+	results  *gridTable
 	editor   *tview.TextArea
 	status   *tview.TextView
 	keybar   *tview.TextView
 
 	theme     Theme
+	version   string // running build, shown in the keybar (always visible)
 	currentDB string // database selected in the Connections tree (drives Schema)
 
 	// Schema panel table list, retained so the table filter can re-render.
@@ -73,18 +78,18 @@ type App struct {
 	schemaFilter string
 
 	// Connections panel database list, retained so / can filter databases.
-	connDatabases []string         // databases under the connected (multi-db) connection
-	connFilter    string           // active database filter term
-	connDBOwner   string           // connID owning connDatabases (for dbNodeRef)
-	connDBNode    *tview.TreeNode  // the connection node whose children are those databases
+	connDatabases []string        // databases under the connected (multi-db) connection
+	connFilter    string          // active database filter term
+	connDBOwner   string          // connID owning connDatabases (for dbNodeRef)
+	connDBNode    *tview.TreeNode // the connection node whose children are those databases
 
 	filterTarget filterTarget // which panel the open filter input targets
 	filterCol    int          // Results column index for the column filter (f)
 
-	focusIdx     int
-	helpOpen     bool
-	historyOpen  bool
-	savedOpen    bool
+	focusIdx        int
+	helpOpen        bool
+	historyOpen     bool
+	savedOpen       bool
 	filterOpen      bool
 	connFormOpen    bool
 	confirmOpen     bool
@@ -97,11 +102,20 @@ type App struct {
 	lastCols []string
 	lastData [][]any
 	filter   string
-	viewRows [][]any // rows currently rendered (after filtering); maps table row → values
+	viewRows [][]any // rows currently rendered (after filter + page); maps table row → values
+	viewAll  [][]any // rows after filtering, before client-side paging
+	viewPage int     // client-side page of an arbitrary (non-preview) result
+	hlRow    int     // Results row currently painted with the row-highlight bar (0 = none)
 
-	// Source of the current result, for in-place cell edit (UPDATE write-back).
+	// Source of the current result, for in-place cell edit (UPDATE write-back)
+	// and for the server-side WHERE filter / paging of a table preview.
 	resultTable    tableRef // single-table preview source (empty when not a preview)
 	resultEditable bool     // true only when the result is a single-table preview
+	resultWhere    string   // active WHERE expression of the preview ("" = none)
+	resultPage     int      // preview page (0-based; each page is resultLimit rows)
+	pendingWhere   string   // WHERE input text, applied on Enter (not per keystroke)
+	goodWhere      string   // WHERE of the last successful preview query (rollback target)
+	goodPage       int      // page of the last successful preview query
 
 	running bool               // a query is executing
 	cancel  context.CancelFunc // cancels the running query (Esc)
@@ -119,10 +133,11 @@ type App struct {
 // New builds the TUI application and its layout, populating the connection list.
 func New(opts Options) *App {
 	a := &App{
-		app:   tview.NewApplication(),
-		cfg:   opts.Config,
-		store: opts.Store,
-		hist:  opts.History,
+		app:     tview.NewApplication(),
+		cfg:     opts.Config,
+		store:   opts.Store,
+		hist:    opts.History,
+		version: opts.Version,
 	}
 	if a.cfg == nil {
 		if cfg, err := config.Load(); err == nil {
@@ -139,6 +154,9 @@ func New(opts Options) *App {
 	a.theme.applyStyles()
 	useRoundedBorders()
 	a.buildLayout()
+	if opts.Version != "" {
+		a.SetStatus(defaultStatus + " · s9l " + opts.Version)
+	}
 	a.populateConnections()
 
 	a.app.SetInputCapture(a.onKey)
@@ -164,7 +182,14 @@ func (a *App) buildLayout() {
 	a.schema.SetSelectedFunc(a.onSchemaSelect)
 	a.titledPanel(a.schema.Box, "[2] Schema")
 
-	a.results = tview.NewTable().SetBorders(false).SetFixed(1, 0)
+	// SetBorders(true) draws grid lines between rows and columns so wide result
+	// sets stay readable (user feedback); gridTable keeps the highlight styles
+	// from spilling onto those lines.
+	a.results = &gridTable{
+		Table: tview.NewTable().SetBorders(true).SetFixed(1, 0),
+		grid:  a.theme.Border,
+		bg:    a.theme.Background,
+	}
 	// Cell selection (rows + columns) so the cursor moves left/right between
 	// cells; the selected cell drives "view value" and (later) in-place edit.
 	a.results.SetSelectable(true, true)
@@ -174,8 +199,10 @@ func (a *App) buildLayout() {
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
 	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
 
-	// Selected-row highlight: a light bar with dark text (reverse under NO_COLOR).
-	a.results.SetSelectedStyle(a.theme.selectionStyle())
+	// The current cell gets the strong cursor style; the rest of its row is
+	// painted with the selection bar by highlightResultsRow, so the whole row
+	// reads as selected while the cell still stands out.
+	a.results.SetSelectedStyle(a.theme.cellCursorStyle())
 
 	a.status = tview.NewTextView().SetDynamicColors(true)
 	a.SetStatus(defaultStatus)
@@ -200,6 +227,11 @@ func (a *App) buildLayout() {
 		AddItem(a.status, 1, 0, false).
 		AddItem(a.keybar, 1, 0, false)
 
+	a.connTree.SetFocusFunc(func() { a.syncFocus(0) })
+	a.schema.SetFocusFunc(func() { a.syncFocus(1) })
+	a.results.SetFocusFunc(func() { a.syncFocus(2) })
+	a.editor.SetFocusFunc(func() { a.syncFocus(3) })
+
 	a.pages = tview.NewPages().AddPage("main", root, true, true)
 	a.app.SetRoot(a.pages, true).EnableMouse(true)
 	a.focusPanel(0)
@@ -221,10 +253,30 @@ func (a *App) navPanels() []tview.Primitive {
 	return []tview.Primitive{a.connTree, a.schema, a.results, a.editor}
 }
 
-// focusPanel moves focus to panel i and highlights its border.
+// focusPanel moves focus to panel i; the panel's focus func (syncFocus) updates
+// focusIdx and the borders, so mouse clicks and Tab/number keys stay in sync.
 func (a *App) focusPanel(i int) {
-	a.focusIdx = i
 	a.app.SetFocus(a.navPanels()[i])
+}
+
+// overlayOpen reports whether any modal/overlay is on screen. Every closer
+// clears its flag only after RemovePage, so this also covers the transient
+// refocus tview performs while an overlay is being torn down.
+func (a *App) overlayOpen() bool {
+	return a.helpOpen || a.historyOpen || a.savedOpen || a.filterOpen ||
+		a.connFormOpen || a.confirmOpen || a.exportOpen ||
+		a.cellValueOpen || a.cellEditOpen || a.confirmEditOpen
+}
+
+// syncFocus records the focused panel and repaints the border colors. It runs
+// via each panel's SetFocusFunc — including when a mouse click moves the focus,
+// which would otherwise leave focusIdx (and the panel keys: v/f/c/Enter/]/[,
+// n/e/d) pointing at the wrong panel.
+func (a *App) syncFocus(i int) {
+	if a.overlayOpen() {
+		return // tview's transient refocus while an overlay opens/closes
+	}
+	a.focusIdx = i
 	a.connTree.SetBorderColor(a.theme.border(i == 0))
 	a.schema.SetBorderColor(a.theme.border(i == 1))
 	a.results.SetBorderColor(a.theme.border(i == 2))
@@ -237,7 +289,7 @@ func (a *App) keyBar() string {
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
 		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
-		{"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
+		{"[ ]", "page"}, {"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
 	for i, e := range keys {
@@ -246,13 +298,18 @@ func (a *App) keyBar() string {
 		}
 		b.WriteString(open + e.key + closing + " " + e.label)
 	}
+	if a.version != "" {
+		// The keybar is static and always visible, so the running build stays
+		// identifiable even after status-line updates (connect, queries, …).
+		b.WriteString("  " + a.theme.tag(a.theme.Dim) + "s9l " + a.version + a.theme.reset())
+	}
 	return b.String()
 }
 
 func (a *App) showHelp() {
 	help := tview.NewTextView().SetDynamicColors(true).SetText(helpText)
 	help.SetBorder(true).SetTitle(" Help ")
-	a.pages.AddPage("help", centered(help, 46, 17), true, true)
+	a.pages.AddPage("help", centered(help, 64, 24), true, true)
 	a.helpOpen = true
 }
 
@@ -281,10 +338,12 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             drill in: connect+databases · pick database · preview table
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
-  /                 filter (Connections: databases · Schema: tables · Results: all-column fuzzy)
+  /                 filter (Connections: databases · Schema: tables · Results:
+                    WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
   v                 Results: view the selected cell's full value
-  c                 Results: edit the selected cell (single-table preview only)
+  c / Enter         Results: edit the selected cell (single-table preview only)
+  ] / [ · > / <     Results: next / previous page (100 rows per page)
   h / l · ← / →     move left/right (Results: between cells)
   Ctrl-R            query history (Enter loads it)
   Ctrl-F            saved queries (Enter runs it)
@@ -495,14 +554,55 @@ func (a *App) onSchemaSelect(node *tview.TreeNode) {
 	node.SetExpanded(!node.IsExpanded())
 }
 
-// runTableQuery previews a table: the first resultLimit rows. The name is quoted
-// per dialect (and database-qualified when browsing another database).
+// runTableQuery previews a table from its first page, with no WHERE filter. The
+// name is quoted per dialect (and database-qualified when browsing another
+// database).
 func (a *App) runTableQuery(ref tableRef) {
-	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), resultLimit))
-	// A single-table preview is editable; runQuery cleared these for the generic
-	// case, so mark editability after it returns (it only spawns a goroutine).
 	a.resultTable = ref
+	a.resultWhere = ""
+	a.resultPage = 0
+	a.goodWhere = ""
+	a.goodPage = 0
+	a.refreshPreview()
+}
+
+// refreshPreview (re-)runs the single-table preview with the current table,
+// WHERE filter, and page. runQuery clears the preview marks (they are wrong for
+// arbitrary SQL), so they are restored after it returns (it only spawns a
+// goroutine). Cell-edit refresh and paging reuse this so WHERE/page survive.
+func (a *App) refreshPreview() {
+	ref, where, page := a.resultTable, a.resultWhere, a.resultPage
+	good, goodPage := a.goodWhere, a.goodPage
+	q := where
+	if a.driverName == "sqlserver" {
+		// Plain '…' literals lose non-ASCII characters under the database's
+		// default collation (silently matching nothing); make them N'…'. The
+		// title keeps the user's original input.
+		q = sqlserverNLiterals(where)
+	}
+	a.runQuery(previewQuery(a.driverName, qualifyTable(a.driverName, ref), q, resultLimit, page*resultLimit))
+	a.resultTable = ref
+	a.resultWhere = where
+	a.resultPage = page
+	a.goodWhere = good
+	a.goodPage = goodPage
 	a.resultEditable = true
+	a.setResultsTitle()
+}
+
+// setResultsTitle keeps the preview context (table · WHERE · page) visible in
+// the Results panel title; arbitrary SQL results reset it to the plain title.
+func (a *App) setResultsTitle() {
+	t := "[3] Results"
+	if a.resultTable.name != "" {
+		t += " — " + a.resultTable.name
+		if a.resultWhere != "" {
+			t += " WHERE " + a.resultWhere
+		}
+		// Always show the page (even page 1) so paging (] / [) is discoverable.
+		t += fmt.Sprintf(" · page %d", a.resultPage+1)
+	}
+	a.results.SetTitle(" " + t + " ")
 }
 
 // qualifyTable builds the quoted, optionally database-qualified table name.
@@ -514,13 +614,27 @@ func qualifyTable(driverName string, ref tableRef) string {
 	return t
 }
 
-// previewQuery builds a "first N rows" SELECT, dialect-aware: SQL Server has no
-// LIMIT and uses TOP instead.
-func previewQuery(driverName, qualified string, n int) string {
-	if driverName == "sqlserver" {
-		return fmt.Sprintf("SELECT TOP %d * FROM %s", n, qualified)
+// previewQuery builds one page of a table preview, dialect-aware. where is a
+// raw boolean expression typed by the user ("" = none) — this is a SQL tool,
+// so the expression is passed through verbatim. SQL Server has no LIMIT: the
+// first page uses TOP, later pages OFFSET…FETCH (which requires an ORDER BY,
+// satisfied with a constant).
+func previewQuery(driverName, qualified, where string, limit, offset int) string {
+	w := ""
+	if where != "" {
+		w = " WHERE " + where
 	}
-	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", qualified, n)
+	if driverName == "sqlserver" {
+		if offset == 0 {
+			return fmt.Sprintf("SELECT TOP %d * FROM %s%s", limit, qualified, w)
+		}
+		return fmt.Sprintf("SELECT * FROM %s%s ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
+			qualified, w, offset, limit)
+	}
+	if offset == 0 {
+		return fmt.Sprintf("SELECT * FROM %s%s LIMIT %d", qualified, w, limit)
+	}
+	return fmt.Sprintf("SELECT * FROM %s%s LIMIT %d OFFSET %d", qualified, w, limit, offset)
 }
 
 // queryResult holds a fetched result set.
@@ -541,10 +655,16 @@ func (a *App) runQuery(sql string) {
 		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
 		return
 	}
-	// Default: an arbitrary query result is not cell-editable; runTableQuery
-	// re-marks single-table previews as editable after this returns.
+	// Default: an arbitrary query result is not cell-editable and has no
+	// preview WHERE/page; refreshPreview re-marks table previews after this
+	// returns.
 	a.resultEditable = false
 	a.resultTable = tableRef{}
+	a.resultWhere = ""
+	a.resultPage = 0
+	a.goodWhere = ""
+	a.goodPage = 0
+	a.setResultsTitle()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := a.conn
@@ -564,10 +684,20 @@ func (a *App) runQuery(sql string) {
 				cerr := classifyErr(err)
 				a.recordHistory(sql, elapsed, 0, cerr)
 				a.setError(cerr.Error())
+				if a.resultTable.name != "" {
+					// A preview refresh failed (e.g. a bad WHERE expression):
+					// the old rows stay on screen, so roll the WHERE/page (and
+					// title) back to the last successful values to match them.
+					a.resultWhere, a.resultPage = a.goodWhere, a.goodPage
+					a.setResultsTitle()
+				}
 			} else {
 				a.setResults(res.cols, res.data)
 				a.recordHistory(sql, elapsed, len(res.data), nil)
 				a.SetStatus(fmt.Sprintf("%d rows · %s", len(res.data), elapsed.Round(time.Millisecond)))
+				if a.resultTable.name != "" {
+					a.goodWhere, a.goodPage = a.resultWhere, a.resultPage
+				}
 			}
 			if a.onResult != nil {
 				a.onResult()
@@ -756,16 +886,44 @@ func (a *App) setResults(cols []string, data [][]any) {
 	a.lastCols = cols
 	a.lastData = data
 	a.filter = ""
+	a.viewPage = 0
 	a.fillResults(cols, data)
 }
 
-// onResultsCellChanged shows the selected cell's position (row · column) in the
-// status bar as the cursor moves through the Results table.
+// onResultsCellChanged repaints the row-highlight bar and shows the selected
+// cell's position (row · column) in the status bar as the cursor moves.
 func (a *App) onResultsCellChanged(row, col int) {
+	a.highlightResultsRow(row)
 	if row <= 0 || col < 0 || col >= len(a.lastCols) {
 		return // header row or out of range
 	}
 	a.SetStatus(fmt.Sprintf("row %d · col [::b]%s[::-]", row, a.lastCols[col]))
+}
+
+// highlightResultsRow paints every cell of row with the selection bar so the
+// whole row reads as selected (tview's own selected style only covers the
+// current cell, which is drawn on top with the stronger cell-cursor style),
+// and restores the previously highlighted row to the default cell look.
+func (a *App) highlightResultsRow(row int) {
+	if row < 1 {
+		row = 0 // header or no selection: just clear the old bar
+	}
+	if row == a.hlRow {
+		return
+	}
+	def := tcell.StyleDefault.
+		Foreground(tview.Styles.PrimaryTextColor).
+		Background(tview.Styles.PrimitiveBackgroundColor) // NewTableCell's default
+	for c := 0; c < a.results.GetColumnCount(); c++ {
+		if a.hlRow > 0 {
+			a.results.GetCell(a.hlRow, c).SetStyle(def).SetTransparency(true)
+		}
+		if row > 0 {
+			// Opaque, so the bar fills the whole cell, not just the text run.
+			a.results.GetCell(row, c).SetStyle(a.theme.selectionStyle()).SetTransparency(false)
+		}
+	}
+	a.hlRow = row
 }
 
 // showCellValue pops up the full value of the selected Results cell (useful for
@@ -778,11 +936,12 @@ func (a *App) showCellValue() {
 	if row <= 0 || col < 0 { // header or nothing selected
 		return
 	}
-	rows := filterRows(a.lastData, a.filter)
-	if row-1 >= len(rows) || col >= len(rows[row-1]) {
+	// viewRows is exactly what is rendered (filter + page applied), so the
+	// table row maps straight to its values.
+	if row-1 >= len(a.viewRows) || col >= len(a.viewRows[row-1]) {
 		return
 	}
-	val := cellString(rows[row-1][col])
+	val := cellString(a.viewRows[row-1][col])
 	title := fmt.Sprintf(" %s ", a.lastCols[col])
 	view := tview.NewTextView().SetText(val).SetWrap(true).SetScrollable(true)
 	view.SetTextColor(a.theme.FieldText)
@@ -919,7 +1078,8 @@ func (a *App) execCellUpdate(sql string, args []any) {
 				return
 			}
 			a.SetStatus(fmt.Sprintf("updated %d row(s)", n))
-			a.runTableQuery(ref) // refresh from the DB
+			a.resultTable = ref
+			a.refreshPreview() // refresh from the DB, keeping WHERE/page
 		})
 	}()
 }
@@ -967,6 +1127,7 @@ func filterRows(data [][]any, term string) [][]any {
 // the match count in the status bar.
 func (a *App) applyFilter(term string) {
 	a.filter = term
+	a.viewPage = 0 // a changed filter restarts client-side paging
 	rows := filterRows(a.lastData, term)
 	a.fillResults(a.lastCols, rows)
 	if term == "" {
@@ -986,7 +1147,73 @@ const (
 	filterTgtSchema
 	filterTgtConn
 	filterTgtResultsCol
+	filterTgtResultsWhere // server-side WHERE on a single-table preview
 )
+
+// applyWhere sets the preview's server-side WHERE expression and re-queries
+// from page 0. An empty expr clears the filter. No-op outside a preview, while
+// a query runs (state would drift), or when the expression is unchanged.
+func (a *App) applyWhere(expr string) {
+	if a.resultTable.name == "" || expr == a.resultWhere {
+		return
+	}
+	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
+		return
+	}
+	a.resultWhere = expr
+	a.resultPage = 0
+	a.refreshPreview()
+}
+
+// nextPage advances one page: table previews re-query the next server page (a
+// short page means there is nothing further); arbitrary results move the
+// client-side slice.
+func (a *App) nextPage() {
+	if a.resultTable.name == "" {
+		if (a.viewPage+1)*resultLimit >= len(a.viewAll) {
+			a.SetStatus("last page")
+			return
+		}
+		a.viewPage++
+		a.fillResults(a.lastCols, a.viewAll)
+		return
+	}
+	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
+		return
+	}
+	if len(a.lastData) < resultLimit {
+		a.SetStatus("last page")
+		return
+	}
+	a.resultPage++
+	a.refreshPreview()
+}
+
+// prevPage goes back one page (server-side for previews, client-side slice for
+// arbitrary results).
+func (a *App) prevPage() {
+	if a.resultTable.name == "" {
+		if a.viewPage == 0 {
+			a.SetStatus("first page")
+			return
+		}
+		a.viewPage--
+		a.fillResults(a.lastCols, a.viewAll)
+		return
+	}
+	if a.running {
+		a.SetStatus("a query is already running… ([::b]Esc[::-] to cancel)")
+		return
+	}
+	if a.resultPage == 0 {
+		a.SetStatus("first page")
+		return
+	}
+	a.resultPage--
+	a.refreshPreview()
+}
 
 // filterRowsByColumn keeps rows whose cell in column colIdx fuzzy-matches term
 // (case-insensitive subsequence). An empty term returns data unchanged.
@@ -1007,6 +1234,7 @@ func filterRowsByColumn(data [][]any, colIdx int, term string) [][]any {
 // column matches term, reporting the match count for that column.
 func (a *App) applyColFilter(term string) {
 	a.filter = term
+	a.viewPage = 0 // a changed filter restarts client-side paging
 	rows := filterRowsByColumn(a.lastData, a.filterCol, term)
 	a.fillResults(a.lastCols, rows)
 	name := ""
@@ -1038,7 +1266,11 @@ func (a *App) showColFilter() {
 
 // openFilterInput shows the shared single-line filter overlay.
 func (a *App) openFilterInput(title, initial string, onChange func(string)) {
-	in := tview.NewInputField().SetLabel(" / ").SetText(initial)
+	a.openInputOverlay(title, " / ", initial, onChange)
+}
+
+func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) {
+	in := tview.NewInputField().SetLabel(label).SetText(initial)
 	in.SetChangedFunc(onChange)
 	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
 	in.SetBorder(true).SetTitle(title).SetBorderColor(a.theme.Focus)
@@ -1076,6 +1308,16 @@ func (a *App) showFilter() {
 		initial = a.schemaFilter
 		onChange = a.applySchemaFilter
 	default: // Results → rows
+		if a.resultTable.name != "" {
+			// Table preview: filter server-side with a WHERE expression. The
+			// text is only staged here — applied on Enter (hideFilter), never
+			// per keystroke, so half-typed SQL doesn't hit the database.
+			a.filterTarget = filterTgtResultsWhere
+			a.pendingWhere = a.resultWhere
+			a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
+				" WHERE ", a.resultWhere, func(s string) { a.pendingWhere = s })
+			return
+		}
 		a.filterTarget = filterTgtResults
 		if len(a.lastData) == 0 {
 			a.SetStatus("no results to filter")
@@ -1089,11 +1331,19 @@ func (a *App) showFilter() {
 }
 
 // hideFilter closes the filter overlay. When clear is true the active filter is
-// reset (restoring the full table or result set).
+// reset (restoring the full table or result set). The WHERE target is the
+// exception to the live-filter model: it applies on Enter (clear=false), since
+// it re-queries the database.
 func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
-	if clear {
+	if a.filterTarget == filterTgtResultsWhere {
+		if clear {
+			a.applyWhere("")
+		} else {
+			a.applyWhere(strings.TrimSpace(a.pendingWhere))
+		}
+	} else if clear {
 		switch a.filterTarget {
 		case filterTgtConn:
 			a.applyConnFilter("")
@@ -1109,7 +1359,26 @@ func (a *App) hideFilter(clear bool) {
 }
 
 // fillResults renders columns + rows into the Results table (header fixed).
+// Arbitrary (non-preview) results are paged client-side: only the viewPage-th
+// slice of resultLimit rows is rendered, with page N/M in the title. Previews
+// arrive already server-paged and render whole.
 func (a *App) fillResults(cols []string, data [][]any) {
+	a.viewAll = data
+	if a.resultTable.name == "" {
+		total := len(data)
+		lastPage := 0
+		if total > 0 {
+			lastPage = (total - 1) / resultLimit
+		}
+		a.viewPage = min(max(a.viewPage, 0), lastPage) // re-renders may shrink the set
+		if total > resultLimit {
+			start := a.viewPage * resultLimit
+			data = data[start:min(start+resultLimit, total)]
+			a.results.SetTitle(fmt.Sprintf(" [3] Results · page %d/%d ", a.viewPage+1, lastPage+1))
+		} else {
+			a.results.SetTitle(" [3] Results ")
+		}
+	}
 	a.viewRows = data // retained so a selected table row maps back to its values
 	a.results.Clear()
 	for c, name := range cols {
@@ -1128,6 +1397,15 @@ func (a *App) fillResults(cols []string, data [][]any) {
 		}
 	}
 	a.results.ScrollToBeginning()
+	// Clear dropped the styled cells, and tview clamps an out-of-range selection
+	// silently (no callback), so re-select explicitly to repaint the row bar.
+	a.hlRow = 0
+	if len(data) > 0 && len(cols) > 0 {
+		row, col := a.results.GetSelection()
+		row = min(max(row, 1), len(data))
+		col = min(max(col, 0), len(cols)-1)
+		a.results.Select(row, col)
+	}
 }
 
 func drainRows(rows driver.Rows) ([]string, [][]any, error) {
@@ -1144,12 +1422,9 @@ func drainRows(rows driver.Rows) ([]string, [][]any, error) {
 	return cols, data, rows.Err()
 }
 
-func cellString(v any) string {
-	if v == nil {
-		return "NULL"
-	}
-	return fmt.Sprintf("%v", v)
-}
+// cellString formats a single value for display; render.Cell shows binary
+// values (invalid UTF-8 / control bytes) as 0x… hex instead of mojibake.
+func cellString(v any) string { return render.Cell(v) }
 
 // quoteIdent quotes a SQL identifier for the given driver (backticks for MySQL,
 // double quotes otherwise), escaping the quote char.
@@ -1439,6 +1714,13 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// Enter on a Results cell edits it (spreadsheet-style alias for c); other
+	// panels keep their own Enter behavior (connect / preview table).
+	if ev.Key() == tcell.KeyEnter && a.focusIdx == 2 {
+		a.showCellEdit()
+		return nil
+	}
+
 	if ev.Key() == tcell.KeyRune {
 		switch ev.Rune() {
 		case 'q':
@@ -1483,6 +1765,19 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		case 'c':
 			if a.focusIdx == 2 { // Results: change (edit) the selected cell
 				a.showCellEdit()
+				return nil
+			}
+		// '］'/'＞' and '［'/'＜' are the full-width forms a CJK input method
+		// emits for the same physical keys; accepting them keeps paging
+		// working without switching the IME to half-width.
+		case ']', '>', '］', '＞':
+			if a.focusIdx == 2 { // Results: next page
+				a.nextPage()
+				return nil
+			}
+		case '[', '<', '［', '＜':
+			if a.focusIdx == 2 { // Results: previous page
+				a.prevPage()
 				return nil
 			}
 		}
