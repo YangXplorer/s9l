@@ -20,6 +20,8 @@ import (
 	"github.com/YangXplorer/s9l/internal/driver"
 	"github.com/YangXplorer/s9l/internal/history"
 	"github.com/YangXplorer/s9l/internal/render"
+	"github.com/YangXplorer/s9l/internal/repl"
+	"github.com/YangXplorer/s9l/internal/schemacache"
 	"github.com/YangXplorer/s9l/internal/secret"
 
 	"github.com/gdamore/tcell/v2"
@@ -62,12 +64,16 @@ type App struct {
 	store secret.SecretStore
 	hist  *history.Store
 
-	connTree *tview.TreeView
-	schema   *tview.TreeView
-	results  *gridTable
-	editor   *tview.TextArea
-	status   *tview.TextView
-	keybar   *tview.TextView
+	connTree  *tview.TreeView
+	schema    *tview.TreeView
+	results   *gridTable
+	editor    *tview.TextArea
+	rightFlex *tview.Flex // Results + editor column; kept for F6 editor zoom
+	// editorZoomed is the F6 toggle: the editor grows to most of the column
+	// (proportional 7:3) instead of its fixed default height.
+	editorZoomed bool
+	status       *tview.TextView
+	keybar       *tview.TextView
 
 	theme     Theme
 	version   string // running build, shown in the keybar (always visible)
@@ -85,6 +91,7 @@ type App struct {
 
 	filterTarget filterTarget // which panel the open filter input targets
 	filterCol    int          // Results column index for the column filter (f)
+	acOpen       bool         // WHERE input's completion dropdown is showing
 
 	focusIdx        int
 	helpOpen        bool
@@ -126,6 +133,18 @@ type App struct {
 	connClose  func() error // closes conn + any SSH tunnel
 	connID     string
 	driverName string
+
+	// SQL completion (WHERE input, editor popup): rebuilt per connection.
+	completer *repl.Completer
+	compStore *schemacache.Store // persistent schema cache; nil = no persistence
+
+	// Editor completion popup state (T7-3).
+	completionOpen  bool
+	compList        *tview.List
+	compCands       []string // full candidate words shown in the popup
+	compPrefixBytes int      // byte length of the word being completed
+	compCursor      int      // byte offset of the cursor when the popup opened
+	compInserting   bool     // guards the changed hook during acceptCompletion
 
 	ready sync.Once
 }
@@ -197,6 +216,7 @@ func (a *App) buildLayout() {
 	a.titledPanel(a.results.Box, "[3] Results")
 
 	a.editor = tview.NewTextArea().SetPlaceholder("Type SQL here, then press F5 to run…")
+	a.editor.SetChangedFunc(func() { a.updateEditorCompletion(true) })
 	a.titledPanel(a.editor.Box, "[4] SQL (F5 run)")
 
 	// The current cell gets the strong cursor style; the rest of its row is
@@ -216,12 +236,12 @@ func (a *App) buildLayout() {
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.connTree, 0, 2, true).
 		AddItem(a.schema, 0, 3, false)
-	right := tview.NewFlex().SetDirection(tview.FlexRow).
+	a.rightFlex = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.results, 0, 1, false).
 		AddItem(a.editor, editorHeight, 0, false)
 	body := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(left, sidebarWidth, 0, true).
-		AddItem(right, 0, 1, false)
+		AddItem(a.rightFlex, 0, 1, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(body, 0, 1, true).
 		AddItem(a.status, 1, 0, false).
@@ -232,7 +252,9 @@ func (a *App) buildLayout() {
 	a.results.SetFocusFunc(func() { a.syncFocus(2) })
 	a.editor.SetFocusFunc(func() { a.syncFocus(3) })
 
-	a.pages = tview.NewPages().AddPage("main", root, true, true)
+	// completionHost draws the editor's completion popup above the panels
+	// (but below modal overlay pages) without involving Pages focus logic.
+	a.pages = tview.NewPages().AddPage("main", completionHost{Primitive: root, a: a}, true, true)
 	a.app.SetRoot(a.pages, true).EnableMouse(true)
 	a.focusPanel(0)
 }
@@ -276,6 +298,9 @@ func (a *App) syncFocus(i int) {
 	if a.overlayOpen() {
 		return // tview's transient refocus while an overlay opens/closes
 	}
+	if i != 3 {
+		a.hideCompletion() // the editor popup follows the editor's focus
+	}
 	a.focusIdx = i
 	a.connTree.SetBorderColor(a.theme.border(i == 0))
 	a.schema.SetBorderColor(a.theme.border(i == 1))
@@ -283,12 +308,27 @@ func (a *App) syncFocus(i int) {
 	a.editor.SetBorderColor(a.theme.border(i == 3))
 }
 
+// toggleEditorZoom flips the SQL editor between its fixed default height and
+// most of the right column (7:3 over the Results table) — long statements get
+// room without leaving the TUI. Layout is resized in place, never rebuilt, so
+// the zoom survives queries, paging, and filters.
+func (a *App) toggleEditorZoom() {
+	a.editorZoomed = !a.editorZoomed
+	if a.editorZoomed {
+		a.rightFlex.ResizeItem(a.results, 0, 3)
+		a.rightFlex.ResizeItem(a.editor, 0, 7)
+	} else {
+		a.rightFlex.ResizeItem(a.results, 0, 1)
+		a.rightFlex.ResizeItem(a.editor, editorHeight, 0)
+	}
+}
+
 // keyBar renders the static bottom shortcut line with accent-colored keys.
 func (a *App) keyBar() string {
 	open := a.theme.tag(a.theme.Accent) + "[::b]"
 	closing := "[::-]" + a.theme.reset()
 	keys := []struct{ key, label string }{
-		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"/", "filter"},
+		{"Tab", "panel"}, {"n", "new"}, {"F5", "run"}, {"F6", "zoom"}, {"/", "filter"},
 		{"[ ]", "page"}, {"^R", "history"}, {"^F", "saved"}, {"?", "help"}, {"q", "quit"},
 	}
 	var b strings.Builder
@@ -338,6 +378,8 @@ const helpText = `[::b]s9l TUI[::-]
   Enter             drill in: connect+databases · pick database · preview table
   n / e / d         new / edit / delete connection (Connections panel only)
   F5                run SQL editor
+  F6                zoom the SQL editor (toggle: 12 rows ⇄ ~70%)
+  ^Space            editor completion (auto after 2 chars; Tab/Enter adopt)
   /                 filter (Connections: databases · Schema: tables · Results:
                     WHERE expression on a table preview, all-column fuzzy otherwise)
   f                 Results: filter by the selected column
@@ -524,6 +566,7 @@ func (a *App) connect(cc config.ConnectionConfig) error {
 	a.driverName = cc.Driver
 	a.currentDB = ""
 	a.SetStatus(fmt.Sprintf("connected: [::b]%s[::-] (%s)", cc.ID, cc.Driver))
+	a.buildCompleter(cc.ID)
 	// What to show after connecting (databases vs tables) is decided by the
 	// caller via loadConnDatabases, so auto-connect and Enter share one path.
 	return nil
@@ -1269,7 +1312,7 @@ func (a *App) openFilterInput(title, initial string, onChange func(string)) {
 	a.openInputOverlay(title, " / ", initial, onChange)
 }
 
-func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) {
+func (a *App) openInputOverlay(title, label, initial string, onChange func(string)) *tview.InputField {
 	in := tview.NewInputField().SetLabel(label).SetText(initial)
 	in.SetChangedFunc(onChange)
 	in.SetFieldBackgroundColor(a.theme.Field).SetFieldTextColor(a.theme.FieldText)
@@ -1277,6 +1320,7 @@ func (a *App) openInputOverlay(title, label, initial string, onChange func(strin
 	a.pages.AddPage("filter", centered(in, 60, 3), true, true)
 	a.app.SetFocus(in)
 	a.filterOpen = true
+	return in
 }
 
 // showFilter opens the / filter input for the focused panel. Typing filters
@@ -1314,8 +1358,9 @@ func (a *App) showFilter() {
 			// per keystroke, so half-typed SQL doesn't hit the database.
 			a.filterTarget = filterTgtResultsWhere
 			a.pendingWhere = a.resultWhere
-			a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
+			in := a.openInputOverlay(" Filter — WHERE <expr> · Enter: apply · Esc: clear ",
 				" WHERE ", a.resultWhere, func(s string) { a.pendingWhere = s })
+			a.attachColumnCompletion(in) // column-name candidates while typing
 			return
 		}
 		a.filterTarget = filterTgtResults
@@ -1337,6 +1382,7 @@ func (a *App) showFilter() {
 func (a *App) hideFilter(clear bool) {
 	a.pages.RemovePage("filter")
 	a.filterOpen = false
+	a.acOpen = false
 	if a.filterTarget == filterTgtResultsWhere {
 		if clear {
 			a.applyWhere("")
@@ -1564,6 +1610,14 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 	// every other key (including j/k) is literal text for the input. Handled
 	// before vim-nav so typing isn't translated to arrows.
 	if a.filterOpen {
+		// While the completion dropdown is showing, Enter/arrows belong to the
+		// input (candidate selection), and Esc just closes the list.
+		if a.acOpen {
+			if ev.Key() == tcell.KeyEscape {
+				a.acOpen = false // the input closes its own list
+			}
+			return ev
+		}
 		switch ev.Key() {
 		case tcell.KeyEnter:
 			a.hideFilter(false)
@@ -1632,6 +1686,37 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return ev
 	}
 
+	// While the editor's completion popup is open, navigation keys act on the
+	// popup and Tab/Enter adopt the candidate; everything else keeps editing
+	// (the editor's changed hook refreshes or closes the popup).
+	if a.completionOpen {
+		switch ev.Key() {
+		case tcell.KeyEscape:
+			a.hideCompletion()
+			return nil
+		case tcell.KeyDown:
+			a.moveCompletion(1)
+			return nil
+		case tcell.KeyUp:
+			a.moveCompletion(-1)
+			return nil
+		case tcell.KeyTab, tcell.KeyEnter:
+			a.acceptCompletion()
+			return nil
+		case tcell.KeyF5:
+			a.hideCompletion()
+			a.runEditor()
+			return nil
+		}
+		return ev
+	}
+
+	// Ctrl-Space opens the editor completion manually (no length threshold).
+	if ev.Key() == tcell.KeyCtrlSpace && a.app.GetFocus() == a.editor {
+		a.updateEditorCompletion(false)
+		return nil
+	}
+
 	// Vim-style navigation: h/j/k/l → Left/Down/Up/Right in any focused widget
 	// except the SQL editor (where they are text). Applies in panels (incl.
 	// Results cell movement) and in the list overlays.
@@ -1687,6 +1772,9 @@ func (a *App) onKey(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyF5:
 		a.runEditor()
+		return nil
+	case tcell.KeyF6:
+		a.toggleEditorZoom()
 		return nil
 	case tcell.KeyCtrlR:
 		a.showHistory()
@@ -1811,6 +1899,11 @@ func (a *App) setError(msg string) {
 // (if any) is closed on exit.
 func (a *App) Run() error {
 	defer a.closeConn()
+	defer func() {
+		if a.compStore != nil {
+			_ = a.compStore.Close()
+		}
+	}()
 	return a.app.Run()
 }
 
@@ -1823,6 +1916,7 @@ func (a *App) closeConn() {
 		a.connClose = nil
 	}
 	a.conn = nil
+	a.completer = nil // completion follows the connection
 }
 
 // --- testing seams ---
